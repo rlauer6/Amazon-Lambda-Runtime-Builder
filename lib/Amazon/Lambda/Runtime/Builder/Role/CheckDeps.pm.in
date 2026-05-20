@@ -1,0 +1,234 @@
+package Amazon::Lambda::Runtime::Builder::Role::CheckDeps;
+
+use CLI::Simple::Constants qw(:booleans);
+use English qw(-no_match_vars);
+use File::Which qw(which);
+
+use Role::Tiny;
+
+########################################################################
+sub cmd_dep_check {
+########################################################################
+  my ($self) = @_;
+
+  my $dist_dir = $self->get_dist_dir;
+
+  local $ENV{AWS_PROFILE} = $self->get_profile
+    if $self->get_profile;
+
+  my $iam_available = eval {
+    require Amazon::API::IAM;
+    require Amazon::API::STS;
+    require Amazon::Credentials;
+
+    return $TRUE;
+  };
+
+  my $logger = $self->get_logger;
+
+  if ( !$iam_available ) {
+    $logger->warn('IAM permissions will not be checked...to check your permissions these modules must be installed:');
+    $logger->warn( join "\n", qw(Amazon::API::IAM Amazon::API::STS Amazon::Credential) );
+  }
+  else {
+    $logger->info('IAM permissions will be checked.');
+  }
+
+  my $manifest = slurp_json( sprintf '%s/MANIFEST.json', $dist_dir );
+
+  my $required = $manifest->{dependencies}{required};
+  my $optional = $manifest->{dependencies}{optional};
+
+  my $env_ok = $iam_available ? $TRUE : $FALSE;  # good so far or cannot be determined
+
+  foreach ( @{$required} ) {
+    my ($found) = which($_);
+
+    if ($found) {
+      $logger->info( sprintf 'checking status of required "%s"...found', $_ );
+    }
+    else {
+      $env_ok = -1;
+      $logger->error( sprintf 'checking status of required "%s"...NOT found', $_ );
+    }
+  }
+
+  foreach ( @{$optional} ) {
+    my ($found) = which($_);
+
+    if ($found) {
+      $logger->info( sprintf 'checking status of optional  "%s"...found', $_ );
+    }
+    else {
+      $logger->error( sprintf 'checking status of optional "%s"...NOT found', $_ );
+    }
+  }
+
+  if ($iam_available) {
+    my $iam_ok = eval { $self->_check_iam_permissions($env_ok); };
+
+    if ($iam_ok) {
+      $logger->info('all required IAM permissions are allowed!');
+    }
+    else {
+      if ($EVAL_ERROR) {
+        $logger->error( 'ERROR checking permissions...' . $EVAL_ERROR );
+      }
+      else {
+        $logger->info('some required IAM permissions are NOT allowed!');
+      }
+      $env_ok = -1;
+    }
+  }
+
+  if ( $env_ok == -1 ) {
+    $logger->error(q{missing requirements or IAM permissions...you won't be able to build and execute runtime image.});
+  }
+  elsif ( !defined $env_ok ) {
+    $logger->error(q{all requirement found...unable to determine if your IAM permissions are sufficient.});
+  }
+  else {
+    $logger->info(q{all requirement found...IAM permissions will allow you to build and execute a runtime image!});
+  }
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub _check_iam_permissions {
+########################################################################
+  my ($self) = @_;
+
+  my $logger = $self->get_logger;
+
+  my $creds = Amazon::Credentials->new(
+    no_passkey_warning => $TRUE,
+    imdsv2             => $TRUE,
+    order              => [qw(file env role )]
+  );
+
+  my $identity = $self->_get_caller_identity($creds);
+
+  my $iam = Amazon::API::IAM->new( credentials => $creds );
+
+  my $permissions_needed = {
+    ECR => [
+      qw(
+        ecr:CreateRepository
+        ecr:DescribeRepositories
+        ecr:GetAuthorizationToken
+        ecr:BatchCheckLayerAvailability
+        ecr:PutImage
+        ecr:InitiateLayerUpload
+        ecr:UploadLayerPart
+        ecr:CompleteLayerUpload
+        ecr:PutLifecyclePolicy
+        ecr:GetLifecyclePolicy)
+    ],
+    IAM => [
+      qw
+        (
+        iam:GetRole
+        iam:CreateRole
+        iam:AttachRolePolicy
+        iam:PassRole
+        iam:ListAttachedRolePolicies
+      )
+    ],
+    LAMBDA => [
+      qw
+        (
+        lambda:GetFunction
+        lambda:CreateFunction
+        lambda:UpdateFunctionCode
+        lambda:GetFunctionConfiguration
+        lambda:UpdateFunctionConfiguration
+        lambda:InvokeFunction
+        lambda:CreateEventSourceMapping
+        lambda:ListEventSourceMappings
+        lambda:GetPolicy
+        lambda:AddPermission
+        lambda:RemovePermission
+        lambda:CreateFunctionUrlConfig
+        lambda:GetFunctionUrlConfig
+        lambda:DeleteFunctionUrlConfig
+      )
+    ],
+    SQS => [
+      qw(
+        sqs:ListQueues
+        sqs:CreateQueue)
+    ],
+    S3 => [
+      qw(
+        s3:CreateBucket
+        s3:ListBuckets
+        s3:PutBucketNotificationConfiguration)
+    ],
+    EVENTBRIDGE => [
+      qw(
+        events:DescribeRule
+        events:PutRule
+        events:PutTargets
+        events:RemoveTargets
+        events:DeleteRule
+        events:EnableRule
+        events:DisableRule
+      )
+    ],
+    STS => [
+      qw(
+        sts:GetCallerIdentity
+      )
+    ],
+    SNS => [
+      qw(
+        sns:ListTopics
+        sns:CreateTopic
+        sns:Subscribe
+        sns:GetTopicAttributes
+      )
+    ],
+  };
+
+  my @permissions;
+
+  my $iam_permissions_ok = $TRUE;
+
+  foreach my $p ( sort keys %{$permissions_needed} ) {
+    my $result = $iam->SimulatePrincipalPolicy(
+      { ActionNames     => $permissions_needed->{$p},
+        PolicySourceArn => Amazon::Credentials->normalize_arn( $identity->{Arn} ),
+      }
+    );
+
+    my $evaluation_results = $result->{EvaluationResults};
+
+    foreach my $r ( @{$evaluation_results} ) {
+
+      my ( $service, $action ) = split /[:]/xsm, $r->{EvalActionName};
+      my $status = $r->{EvalDecision};
+      $logger->info( sprintf 'checking IAM permission: "%s"...%s', $p, $status );
+      next if $status eq 'allowed';
+      $iam_permissions_ok = $FALSE;
+      $logger->info( sprintf 'required permission [%s] not allowed...status: [%s]', $p, $status );
+    }
+
+  }
+
+  return $iam_permissions_ok;
+}
+
+########################################################################
+sub _get_caller_identity {
+########################################################################
+  my ( $self, $creds ) = @_;
+
+  my $sts = Amazon::API::STS->new( credentials => $creds );
+
+  my $result = $sts->GetCallerIdentity();
+
+  return $result;
+}
+
+1;

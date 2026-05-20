@@ -1,0 +1,33 @@
+package Amazon::Lambda::Runtime::Builder::Role::STS;
+
+use strict;
+use warnings;
+
+use CLI::Simple::Constants qw(:booleans);
+use Data::Dumper;
+use English qw(-no_match_vars);
+use Role::Tiny;
+
+########################################################################
+sub _sts_get_account {
+########################################################################
+  my ($self) = @_;
+
+  require Amazon::API::STS;
+
+  return Amazon::API::STS->new->GetCallerIdentity->{Account};
+}
+
+########################################################################
+sub cmd_sts_get_account {
+########################################################################
+  my ($self) = @_;
+
+  my $account = $self->_sts_get_account;
+
+  print {*STDOUT} $account;
+
+  return $SUCCESS;
+}
+
+1;

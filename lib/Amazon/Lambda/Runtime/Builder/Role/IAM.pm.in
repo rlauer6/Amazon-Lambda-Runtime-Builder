@@ -1,0 +1,115 @@
+package Amazon::Lambda::Runtime::Builder::Role::IAM;
+
+use strict;
+use warnings;
+
+use CLI::Simple::Constants qw(:booleans);
+use CLI::Simple::Utils qw(slurp slurp_json);
+use Data::Dumper;
+use English qw(-no_match_vars);
+use JSON;
+
+use Role::Tiny;
+
+########################################################################
+sub cmd_create_assume_policy {
+########################################################################
+  my ($self) = @_;
+
+  my ($service) = $self->get_args;
+
+  die "ERROR: usage: alr-builder-helper create-assume-policy service\n"
+    if !$service;
+
+  print encode_json(
+    { Version   => '2012-10-17',
+      Statement => [
+        { Effect    => 'Allow',
+          Principal => { Service => $service },
+          Action    => 'sts:AssumeRole'
+        }
+      ]
+    }
+  );
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_iam_create_role {
+########################################################################
+  my ($self) = @_;
+
+  my ( $role_name, $policy_document ) = $self->get_args;
+
+  die "ERROR: usage: alr-builder-help create-role role-name policy-document\n"
+    if !$role_name || !$policy_document || !-e $policy_document;
+
+  my $document = eval { slurp_json($policy_document); };
+
+  die "ERROR: could not read policy document: $policy_document\n$EVAL_ERROR"
+    if $EVAL_ERROR;
+
+  $document = encode_json($document);
+
+  require Amazon::API::IAM;
+
+  my $iam = Amazon::API::IAM->new;
+
+  my $rsp = $iam->CreateRole( { RoleName => $role_name, AssumeRolePolicyDocument => $document } );
+
+  print {*STDOUT} JSON->new->pretty->encode($rsp);
+
+  return $SUCCESS;
+}
+########################################################################
+sub cmd_iam_attach_role_policy {
+########################################################################
+  my ($self) = @_;
+
+  my ( $role_name, $policy_file ) = $self->get_args;
+
+  die "ERROR: no such file: $policy_file\n"
+    if !-e $policy_file;
+
+  require Amazon::API::IAM;
+  my $iam = Amazon::API::IAM->new;
+
+  my $policies = slurp($policy_file);
+
+  foreach my $policy ( grep { /\S/xsm && !/^\s*[#]/xsm } split /\n/xsm, $policies ) {
+    $iam->AttachRolePolicy( { RoleName => $role_name, PolicyArn => $policy } );
+  }
+
+  print {*STDOUT} $policies;
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub _iam_get_role {
+########################################################################
+  my ( $self, $role_name ) = @_;
+
+  require Amazon::API::IAM;
+
+  my $iam = Amazon::API::IAM->new;
+  return $iam->GetRole( { RoleName => $role_name } );
+}
+
+########################################################################
+sub cmd_iam_get_role {
+########################################################################
+  my ($self) = @_;
+
+  my ($role_name) = $self->get_args;
+
+  die "ERROR: usage: get-role role-name\n"
+    if !$role_name;
+
+  print {*STDOUT} JSON->new->pretty->encode( $self->_iam_get_role($role_name) );
+
+  return $SUCCESS;
+}
+
+1;

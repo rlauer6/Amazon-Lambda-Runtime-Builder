@@ -1,0 +1,30 @@
+{
+    "files": {
+        "Dockerfile" : "docker/Dockerfile",
+        "LambdaHandler.pm" : "LambdaHandler.pm",
+        "Makefile.build" : "Makefile",
+        "ecr-create-repo.mk" : ".includes/ecr-create-repo.mk",
+        "ecr-login.mk" : ".includes/ecr-login.mk",
+        "eventbridge.mk" : ".includes/eventbridge.mk",
+        "gitignore" : ".gitignore",
+        "help.mk" : ".includes/help.mk",
+        "payload-sns.json" : "payload-sns.json",
+        "payload.json" : "payload.json",
+        "policies" : "policies",
+        "project.mk": "project.mk",
+        "s3.mk" : ".includes/s3.mk",
+        "sns.mk" : ".includes/sns.mk",
+        "sqs.mk" : ".includes/sqs.mk",
+        "streaming.mk" : ".includes/streaming.mk",
+        "README.md" : "README.md"
+    },
+    "dependencies": {
+        "required": [
+            "docker",
+            "make"
+        ],
+        "optional" : [
+            "curl"
+        ]
+    }
+}

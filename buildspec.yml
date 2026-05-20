@@ -1,0 +1,42 @@
+---
+project:
+  description: Amazon::Lambda::Runtime::Builder
+  author:
+    name: Rob Lauer
+    mailto: rclauer@gmail.com
+pm-module: Amazon::Lambda::Runtime::Builder
+min-perl-version: 5.010
+dependencies:
+  requires: requires
+  test-requires: test-requires
+path:
+  pm-module: lib
+  exe-files: bin
+  tests: t
+extra-files:
+  - ChangeLog
+  - share:
+      - README.md
+      - share/Dockerfile
+      - share/MANIFEST.json
+      - share/LambdaHandler.pm
+      - share/Makefile.build
+      - share/ecr-create-repo.mk
+      - share/ecr-login.mk
+      - share/eventbridge.mk
+      - share/payload-sns.json
+      - share/policies
+      - share/payload.json
+      - share/s3.mk
+      - share/sns.mk
+      - share/sqs.mk
+      - share/streaming.mk
+resources:
+  bugtracker:
+    mailto: rclauer@gmail.com
+    web: https://github.com/rlauer6/Amazon-Lambda-Runtime-Builder/issues
+  homepage: https://github.com/rlauer6/Amazon-Lambda-Runtime-Builder
+  repository:
+    type: git
+    url: git@github.com:rlauer6/Amazon-Lambda-Runtime-Builder.git
+    web: https://github.com/rlauer6/Amazon-Lambda-Runtime-Builder

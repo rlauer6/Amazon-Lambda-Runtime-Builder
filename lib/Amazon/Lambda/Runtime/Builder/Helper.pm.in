@@ -1,0 +1,227 @@
+package Amazon::Lambda::Runtime::Builder::Helper;
+
+use strict;
+use warnings;
+
+use CLI::Simple::Constants qw(:booleans);
+use CLI::Simple::Utils qw(slurp_json slurp);
+use Data::Dumper;
+use English qw(-no_match_vars);
+use File::Basename qw(basename);
+use JSON;
+
+use Role::Tiny::With;
+with 'Amazon::Lambda::Runtime::Builder::Role::ECR';
+with 'Amazon::Lambda::Runtime::Builder::Role::Events';
+with 'Amazon::Lambda::Runtime::Builder::Role::IAM';
+with 'Amazon::Lambda::Runtime::Builder::Role::Lambda';
+with 'Amazon::Lambda::Runtime::Builder::Role::S3';
+with 'Amazon::Lambda::Runtime::Builder::Role::SQS';
+with 'Amazon::Lambda::Runtime::Builder::Role::STS';
+
+__PACKAGE__->use_log4perl( level => 'info' );
+
+use parent qw(CLI::Simple);
+
+our $VERSION = '@PACKAGE_VERSION@';
+
+caller or __PACKAGE__->main();
+
+########################################################################
+sub _fetch_meta {
+########################################################################
+  my ( $self, $tar ) = @_;
+
+  my $tarball   = $self->get_tarball;
+  my $dist_name = basename( $tarball, qw(.tar.gz) );
+  my $meta      = $tar->get_content("$dist_name/META.json");
+
+  return decode_json($meta);
+}
+
+########################################################################
+sub cmd_check {
+########################################################################
+  my ($self) = @_;
+
+  my $tar = $self->get_tar;
+
+  my $tarball = $self->get_tarball;
+
+  my ($file) = $self->get_args;
+
+  die "ERROR: usage alr-builder-helper --tarball {tarball} check file\n"
+    if !$tar || !$file;
+
+  my $full_path = sprintf '%s/%s', basename( $tarball, qw(.tar.gz) ), $file;
+
+  return $tar->contains_file($full_path) ? $SUCCESS : $FAILURE;
+}
+
+########################################################################
+sub _create_cpanfile {
+########################################################################
+  my ( $self, $fh, $tar ) = @_;
+
+  require CPAN::Meta;
+
+  my $m = CPAN::Meta->new( $self->_fetch_meta($tar) );
+
+  for my $phase (qw(runtime configure)) {
+    my $r = $m->effective_prereqs->requirements_for( $phase, q{requires} );
+
+    for my $mod ( sort $r->required_modules ) {
+      print {$fh} sprintf qq{requires q{%s}, q{%s};\n}, $mod, $r->requirements_for_module($mod) // 0;
+    }
+  }
+
+  return;
+}
+
+########################################################################
+sub cmd_create_cpanfile {
+########################################################################
+  my ($self) = @_;
+
+  my $tar = $self->get_tar;  # set in init() if --tarball set
+
+  die "ERROR: usage alr-helper create-cpanfile --tarball tarball\n"
+    if !$tar;
+
+  open my $fh, '>', 'cpanfile'
+    or die "ERROR: could open cpanfile for writing\n:$OS_ERROR";
+
+  $self->_create_cpanfile( $fh, $tar );
+
+  close $fh;
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub _check_response {
+########################################################################
+  my ( $self, $rsp ) = @_;
+
+  if ( !$rsp ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  if ($rsp) {
+    print {*STDOUT} JSON->new->pretty->encode($rsp);
+  }
+
+  return $SUCCESS;
+
+}
+
+########################################################################
+sub init {
+########################################################################
+  my ($self) = @_;
+
+  my $tarball = $self->get_tarball;
+
+  if ($tarball) {
+    require Archive::Tar;
+    my $tar = Archive::Tar->new;
+    $tar->read($tarball);
+
+    $self->set_tar($tar);
+
+    my $dist_name = basename( $tarball, qw(.tar.gz) );
+    $self->set_dist_name($dist_name);
+  }
+
+  return $self;
+}
+
+########################################################################
+sub main {
+########################################################################
+  my %commands = (
+    'add-permission'               => \&cmd_lambda_add_permission,
+    'attach-policy'                => \&cmd_iam_attach_role_policy,
+    'check'                        => \&cmd_check,
+    'create-assume-policy'         => \&cmd_create_assume_policy,
+    'create-bucket'                => \&cmd_s3_create_bucket,
+    'create-cpanfile'              => \&cmd_create_cpanfile,
+    'create-event-source-mappings' => \&cmd_lambda_create_event_source_mappings,
+    'create-function'              => \&cmd_lambda_create_function,
+    'create-function-url-config'   => \&cmd_lambda_create_function_url_config,
+    'create-queue'                 => \&cmd_sqs_create_queue,
+    'create-repository'            => \&cmd_ecr_create_repository,
+    'create-role'                  => \&cmd_iam_create_role,
+    'delete-function-url-config'   => \&cmd_lambda_delete_function_url_config,
+    'delete-rule'                  => \&cmd_event_bridge_delete_rule,
+    'describe-images'              => \&cmd_ecr_describe_images,
+    'describe-repositories'        => \&cmd_ecr_describe_repositories,
+    'describe-rule'                => \&cmd_event_bridge_describe_rule,
+    'disable-rule'                 => \&cmd_event_bridge_disable_rule,
+    'enable-rule'                  => \&cmd_event_bridge_enable_rule,
+    'get-bucket-notification'      => \&cmd_s3_get_bucket_notification_configuration,
+    'put-bucket-notification'      => \&cmd_s3_put_bucket_notification_configuration,
+    'put-lambda-target'            => \&cmd_event_bridge_put_lambda_target,
+    'put-rule-expression'          => \&cmd_event_bridge_put_rule_expression,
+    'put-rule-pattern'             => \&cmd_event_bridge_put_rule_pattern,
+    'get-account'                  => \&cmd_sts_get_account,
+    'get-function'                 => \&cmd_lambda_get_function,
+    'get-function-url-config'      => \&cmd_lambda_get_function_url_config,
+    'get-login-password'           => \&cmd_ecr_get_login_password,
+    'get-role'                     => \&cmd_iam_get_role,
+    'get-lifecycle-policy'         => \&cmd_ecr_get_lifecycle_policy,
+    'get-lambda-policy'            => \&cmd_lambda_get_policy,
+    'invoke-function'              => \&cmd_lambda_invoke_function,
+    'list-buckets'                 => \&cmd_s3_list_buckets,
+    'list-event-source-mappings'   => \&cmd_lambda_list_event_source_mappings,
+    'list-queues'                  => \&cmd_sqs_list_queues,
+    'put-lifecycle-policy'         => \&cmd_ecr_put_lifecycle_policy,
+    'remove-targets'               => \&cmd_event_bridge_remove_targets,
+    'update-function'              => \&cmd_lambda_update_function_code,
+  );
+
+  my @option_specs = qw(
+    tarball|t=s help|h
+    timeout|T=i
+    wait|w=i
+    localstack|L
+    log-leve|l=s
+    output|o=s
+  );
+
+  my $extra_options = [qw( tar dist_name )];
+
+  my $cli = __PACKAGE__->new(
+    commands      => \%commands,
+    option_specs  => \@option_specs,
+    extra_options => $extra_options
+  );
+
+  return $cli->run;
+}
+
+1;
+
+## no critic (RequirePodSections)
+
+__END__
+
+=pod
+
+=head1 NAME
+
+ alr-helper
+
+=head1 SYNOPSIS
+
+ alr-helper options command
+
+=head1 DESCRIPTION
+
+Helper functions that replace the need to include the C<aws>
+CLI. These functions are not full implementations of the CLI commands
+but rather a slimmed down invocation of AWS APIs with only the
+parameters required for this application.
+
+=cut

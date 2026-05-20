@@ -1,0 +1,43 @@
+package Amazon::Lambda::Runtime::Builder::Role::Install;
+
+use CLI::Simple::Constants qw(:booleans);
+use Cwd qw(cwd);
+use File::Basename qw(dirname basename);
+use File::Copy qw(copy);
+use File::Path qw(make_path);
+use English qw(-no_match_vars);
+
+use Role::Tiny;
+
+########################################################################
+sub cmd_install {
+########################################################################
+  my ($self) = @_;
+
+  my $install_dir = $self->get_install_dir // cwd;
+  my $manifest    = $self->get_manifest();
+  my $dist_dir    = $self->get_dist_dir;
+
+  if ( !-d $install_dir ) {
+    make_path($install_dir);
+  }
+
+  foreach my $file ( keys %{$manifest} ) {
+    my $src = sprintf '%s/%s', $dist_dir, basename($file);
+
+    my $dest = $manifest->{$file};
+    my $dir  = dirname($dest);
+
+    if ( !-d "$install_dir/$dir" ) {
+      make_path("$install_dir/$dir");
+    }
+
+    $self->get_logger->info( sprintf 'copying %s -> %s', $src, "$install_dir/$dest" );
+
+    copy $src, "$install_dir/$dest";
+  }
+
+  return $SUCCESS;
+}
+
+1;

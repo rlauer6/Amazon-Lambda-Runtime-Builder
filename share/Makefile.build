@@ -1,0 +1,290 @@
+#-*- mode: makefile; -*-
+SHELL := /bin/bash
+
+.SHELLFLAGS := -ec
+
+VERSION := $(shell test -e ../VERSION && cat ../VERSION)
+
+-include project.mk
+
+AWS_PROFILE   ?= default
+REGION        ?= us-east-1
+REPO_NAME     ?= perl-lambda
+FUNCTION_NAME ?= lambda-handler
+ROLE_NAME     ?= lambda-role
+AWS_ACCOUNT   ?= $(shell alr-helper get-account)
+NOCACHE       ?=
+PAYLOAD       ?= payload-sns.json
+TIMEOUT       ?= 30
+INCLUDES_DIR  := .includes
+BUILDER_HOME  ?= $(shell echo $$(pwd))
+CACHE_DIR     := $(BUILDER_HOME)/.cache
+NO_ECHO       ?= @
+HANDLER_CLASS ?= LambdaHandler.pm
+DIST_TARBALL  ?= $(shell ls $(BUILDER_HOME)/../*.tar.gz 2>/dev/null | sort -V | tail -1)
+DIST_NAME     := $(shell tar --wildcards -xOf $(DIST_TARBALL) '*/META.json' 2>/dev/null | \
+                   perl -MJSON -0ne 'print decode_json($$_)->{name}' 2>/dev/null)
+
+# Used when BUILDING Perl XS based modules that require additional
+# libraries (ex: libssl-dev, etc)
+EXTRA_BUILD_PACKAGES   ?=
+
+# Used when USING Perl XS based modules that require additional
+# libraries (ex: libssl, etc)
+EXTRA_RUNTIME_PACKAGES ?=
+
+# Used to set a DarkPAN (ex:
+# 02packages,https://cpan.openbedrock.net/orepan2)
+RESOLVER               ?=
+
+# Used to reinstall packages that may have already been installed by a
+# previous Docker layer. Typically a new version of a module (without
+# a version number change) has been pushed to a DarkPAN.
+REINSTALL_PACKAGES     ?=
+
+ifeq ($(DIST_TARBALL),)
+  $(error No tarball found in $(BUILDER_HOME)/../ - Layer 1 must produce a dist tarball first)
+endif
+
+ifdef REBUILD
+REBUILD_ARG = --build-arg DARKPAN_REBUILD=$(shell date +%s)
+else
+REBUILD_ARG =
+endif
+
+lambda-policies:            $(CACHE_DIR)/lambda-policies ## attach IAM policies to execution role
+lambda-function:            $(CACHE_DIR)/lambda-function ## create Lambda function (builds image if needed)
+lambda-role:                $(CACHE_DIR)/lambda-role ## create IAM execution role
+ecr-repo:                   $(CACHE_DIR)/ecr-repo ## create ECR repository and lifecycle policy
+deploy:                     $(CACHE_DIR)/deploy ## push image to ECR and tag as latest
+image:                      $(CACHE_DIR)/image ## build Docker image from distribution tarball
+update-function:            $(CACHE_DIR)/update-function ## update Lambda function code to latest image
+lambda-s3-trigger:          $(CACHE_DIR)/lambda-s3-trigger
+lambda-sqs-trigger:         $(CACHE_DIR)/lambda-sqs-trigger
+lambda-eventbridge-trigger: $(CACHE_DIR)/lambda-eventbridge-trigger
+sns:                        $(CACHE_DIR)/sns
+tarball-validated:          $(CACHE_DIR)/tarball-validated
+
+$(CACHE_DIR):
+	mkdir -p $(CACHE_DIR)
+
+########################################################################
+# generate cpanfile from tarball META.json (runtime + configure prereqs)
+########################################################################
+$(BUILDER_HOME)/docker/cpanfile: $(DIST_TARBALL) | $(CACHE_DIR)
+	$(NO_ECHO)alr-helper create-cpanfile --tarball $(DIST_TARBALL)  > $@
+
+########################################################################
+# generate debian-packages from cpanfile via cpan-sysdeps
+# falls back to empty file if cpan-sysdeps is not available
+########################################################################
+$(BUILDER_HOME)/docker/debian-packages: $(BUILDER_HOME)/docker/cpanfile
+	$(NO_ECHO)if command -v cpan-sysdeps > /dev/null 2>&1; then \
+	    cpan-sysdeps find-deps --cpanfile $< > $@; \
+	else \
+	    touch $@; \
+	fi
+
+########################################################################
+# validate tarball contains LambdaHandler.pm before building image
+########################################################################
+$(CACHE_DIR)/tarball-validated: $(DIST_TARBALL) | $(CACHE_DIR)
+	$(NO_ECHO)module_path=$$(echo $(HANDLER_CLASS) | sed -e 's/::/\//g'); \
+	alr-helper --tarball $(DIST_TARBALL) check "lib/$${module_path}.pm" || { \
+	  echo "ERROR: $(HANDLER_CLASS) not found in $(DIST_TARBALL)" >&2; \
+	  exit 1; \
+	}; \
+	touch $@ && chmod 444 $@
+
+########################################################################
+# create Docker image
+########################################################################
+$(CACHE_DIR)/image: \
+    $(BUILDER_HOME)/docker/Dockerfile \
+    $(BUILDER_HOME)/docker/cpanfile \
+    $(BUILDER_HOME)/docker/debian-packages \
+    $(CACHE_DIR)/tarball-validated | $(CACHE_DIR)
+	$(NO_ECHO)test -e $@ && chmod -f 644 $@; \
+	cp $(DIST_TARBALL) docker/; \
+	if [[ -n "$(RESOLVER)" ]]; then \
+	  resolver="--build-arg RESOLVER=\"--resolver $(RESOLVER)\""; \
+	fi; \
+	docker build $(NOCACHE) $(REBUILD_ARG) \
+	  --build-arg DIST_TARBALL=$$(basename $(DIST_TARBALL)) \
+	  --build-arg HANDLER_CLASS=$(HANDLER_CLASS) \
+	  --build-arg EXTRA_BUILD_PACKAGES="$(EXTRA_BUILD_PACKAGES)" \
+	  --build-arg EXTRA_RUNTIME_PACKAGES="$(EXTRA_RUNTIME_PACKAGES)" \
+	  --build-arg REINSTALL_PACKAGES="$(REINSTALL_PACKAGES)" \
+	  $$resolver \
+	  -f $< -t $(REPO_NAME) docker && \
+	docker inspect $(REPO_NAME):latest > $@ && chmod 444 $@ || rm -f $@; \
+	rm -f docker/$$(basename $(DIST_TARBALL))
+
+include .includes/ecr-create-repo.mk
+
+include .includes/ecr-login.mk
+
+########################################################################
+# push image to ECR repository
+########################################################################
+$(CACHE_DIR)/deploy: $(CACHE_DIR)/ecr-repo $(CACHE_DIR)/image | $(CACHE_DIR)
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null
+	$(call ecr_login,$(shell cat $(CACHE_DIR)/ecr-repo))
+	$(NO_ECHO)URI=$$(cat $(CACHE_DIR)/ecr-repo); \
+	docker tag $(REPO_NAME):latest $$URI:latest; \
+	docker push $$URI:latest > $@ && chmod 444 $@ || rm -f $@
+
+########################################################################
+define create_assume_role_policy
+########################################################################
+use JSON;
+
+print encode_json({ 
+   Version   => "2012-10-17", 
+   Statement => [{ 
+     Effect    => "Allow", 
+     Principal => { Service => $ENV{service} }, 
+     Action    => "sts:AssumeRole"
+   }]
+ });
+endef
+
+export s_create_assume_policy = $(value create_assume_role_policy)
+
+########################################################################
+# create Lambda role & policy
+########################################################################
+
+$(CACHE_DIR)/policy-document: | $(CACHE_DIR)
+	$(NO_ECHO)alr-helper create-assume-policy lambda.amazonaws.com > $@ && chmod 444 $@
+
+$(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null; \
+	if alr-helper get-role $(ROLE_NAME) > $@ 2>/dev/null; then \
+	    echo "role $(ROLE_NAME) already exists"; \
+	    chmod 444 $@; \
+	else \
+	    alr-helper create-role $(ROLE_NAME) $< > $@ && chmod 444 $@ || rm -f $@; \
+	fi
+
+POLICIES_FILE ?= policies
+
+$(CACHE_DIR)/lambda-policies: $(CACHE_DIR)/lambda-role $(POLICIES_FILE) | $(CACHE_DIR)
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null; \
+	policies=$$(mktemp); trap 'rm -f $$policies' EXIT; \
+	alr-helper attach-policy $(ROLE_NAME) $(POLICIES_FILE) > $$policies && cp $$policies $@ && chmod 444 $@
+
+.PHONY: update-policies
+update-policies: $(POLICIES_FILE) ## re-attach IAM policies from policies file
+	$(NO_ECHO)$(MAKE) $(CACHE_DIR)/lambda-policies
+
+########################################################################
+# create/update Lambda function
+########################################################################
+$(CACHE_DIR)/lambda-function: $(CACHE_DIR)/ecr-repo $(CACHE_DIR)/lambda-policies | $(CACHE_DIR)/deploy
+	$(NO_ECHO)function="$$(alr-helper get-function $(FUNCTION_NAME))"; \
+	if echo "$$function" | grep -qi 'function not found'; then \
+	    URI=$$(cat $(CACHE_DIR)/ecr-repo); \
+	    function="$$(alr-helper create-function $(FUNCTION_NAME) $(ROLE_NAME) $$URI)"; \
+	elif echo "$$function" | grep -q 'errorCode\|error\|Error'; then \
+	    echo "ERROR: get-function failed: $$function" >&2; \
+	    exit 1; \
+	fi; \
+	test -e $@ || { echo "$$function" > $@ && chmod 444 $@; }
+
+$(CACHE_DIR)/image-digest: $(CACHE_DIR)/deploy | $(CACHE_DIR)
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null; \
+	alr-helper describe-images $(REPO_NAME) | \
+	  perl -MJSON -0ne 'print decode_json($$_)->{imageDigest}' > $@ && chmod 444 $@
+
+$(CACHE_DIR)/update-function: $(CACHE_DIR)/image-digest | $(CACHE_DIR)
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null; \
+	DIGEST=$$(cat $<); \
+	URI=$$(cat $(CACHE_DIR)/ecr-repo); \
+        alr-helper update-function $(FUNCTION_NAME) $$URI $$DIGEST; \
+        echo "$$URI@$$DIGEST" > $@ && chmod 444 $@
+
+########################################################################
+# invoke Lambda function
+########################################################################
+
+invoke: ## invoke Lambda function with test payload $(CACHE_DIR)/lambda-function payload.json
+	$(NO_ECHO)alr-helper invoke-function $(FUNCTION_NAME) $(PAYLOAD)
+
+########################################################################
+# Test targets:
+########################################################################
+# SNS
+#   make sns
+########################################################################
+include .includes/sns.mk
+
+########################################################################
+# SQS
+#   make lambda-sqs-trigger QUEUE_NAME=lambda-runtime
+########################################################################
+include .includes/sqs.mk
+
+########################################################################
+# EventBridge
+#   make lambda-eventbridge-trigger
+#   make disable-eventbridge-rule
+#   make enable-eventbridge-rule
+#   make delete-eventbridge-rule
+########################################################################
+include .includes/eventbridge.mk
+
+########################################################################
+# S3
+#   make lambda-s3-trigger BUCKET_NAME=some-bucket
+#   aws s3 cp some-file s3://some-bucket/some-file
+########################################################################
+include .includes/s3.mk
+
+include .includes/streaming.mk
+
+CLEANFILES = \
+    $(CACHE_DIR)/tarball-validated \
+    $(CACHE_DIR)/deploy \
+    $(CACHE_DIR)/ecr-repo \
+    $(CACHE_DIR)/ecr-uri \
+    $(CACHE_DIR)/ecr-lifecycle-policy \
+    $(CACHE_DIR)/image \
+    $(CACHE_DIR)/image-digest \
+    $(CACHE_DIR)/lambda-function \
+    $(CACHE_DIR)/lambda-function-url \
+    $(CACHE_DIR)/lambda-function-url-permission \
+    $(CACHE_DIR)/lambda-function-url-invoke-permission \
+    $(CACHE_DIR)/lambda-policies \
+    $(CACHE_DIR)/lambda-role \
+    $(CACHE_DIR)/lambda-s3-permission \
+    $(CACHE_DIR)/lambda-eventbridge-rule \
+    $(CACHE_DIR)/lambda-eventbridge-permission \
+    $(CACHE_DIR)/lambda-eventbridge-trigger \
+    $(CACHE_DIR)/lambda-sqs-trigger \
+    $(CACHE_DIR)/lambda-s3-trigger \
+    $(CACHE_DIR)/policy-document \
+    $(CACHE_DIR)/sns \
+    $(CACHE_DIR)/sqs-queue \
+    $(CACHE_DIR)/s3-bucket \
+    $(CACHE_DIR)/update-function \
+    invoke \
+    $(BUILDER_HOME)/docker/cpanfile \
+    $(BUILDER_HOME)/docker/debian-packages \
+
+clean: ## remove all generated sentinels and docker artifacts
+	$(NO_ECHO)chmod -f 644 $(CLEANFILES) 2>/dev/null; \
+	rm -f $(CLEANFILES)
+
+.PHONY: \
+    lambda-policies \
+    lambda-function \
+    lambda-role \
+    ecr-repo \
+    deploy \
+    image \
+    update-function \
+    lambda-s3-trigger \
+    lambda-sqs-trigger \
+    sns
+

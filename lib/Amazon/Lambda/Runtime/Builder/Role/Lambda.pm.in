@@ -1,0 +1,342 @@
+package Amazon::Lambda::Runtime::Builder::Role::Lambda;
+
+use strict;
+use warnings;
+
+use CLI::Simple::Constants qw(:booleans);
+use Data::Dumper;
+use English qw(-no_match_vars);
+use JSON;
+use Role::Tiny;
+
+use Readonly;
+Readonly::Scalar our $DEFAULT_LAMBDA_CREATE_TIMEOUT => 60;
+Readonly::Scalar our $DEFAULT_EVENT_BATCH_SIZE      => 10;
+
+########################################################################
+sub cmd_lambda_update_function_code {
+########################################################################
+  my ($self) = @_;
+
+  my ( $function_name, $repo_name, $digest ) = $self->get_args;
+
+  die "ERROR: usage alr-builder-helper update-function function-name repo-name digest\n"
+    if !$function_name || !$repo_name || !$digest;
+
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  my $rsp = eval {
+    $lambda->UpdateFunctionCode(
+      { FunctionName => $function_name,
+        ImageUri     => sprintf( '%s@%s', $repo_name, $digest ),
+      }
+    );
+  };
+
+  if ( !$rsp ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  print {*STDOUT} JSON->new->pretty->encode($rsp);
+
+  eval {
+    local $SIG{ALRM} = sub { die "timed out\n"; };
+
+    if ( $self->get_wait ) {
+      alarm $self->get_wait;
+    }
+
+    while ( $TRUE && $self->get_wait ) {
+      my $rsp = $lambda->GetFunction( { FunctionName => $function_name } );
+      last if $rsp->{State} eq 'Active';
+      sleep 1;
+    }
+
+    alarm 0;
+  };
+
+  if ($EVAL_ERROR) {
+    print {*STDERR} "timed out waiting for function to be come activated\n";
+  }
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_lambda_invoke_function {
+########################################################################
+  my ($self) = @_;
+
+  my ( $function_name, $payload ) = $self->get_args;
+
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  my $rsp = eval { $lambda->Invoke( { FunctionName => $function_name, Payload => slurp($payload), } ); };
+
+  print {*STDOUT} $rsp ? JSON->new->pretty->encode($rsp) : $EVAL_ERROR;
+
+  return $rsp ? $SUCCESS : $FAILURE;
+
+}
+
+########################################################################
+sub cmd_lambda_create_function {
+########################################################################
+  my ($self) = @_;
+
+  my ( $function_name, $role_name, $image ) = $self->get_args;
+
+  my $role = $self->_iam_get_role($role_name);
+
+  my $account = $self->_sts_get_account;
+
+  my $role_arn = sprintf 'arn:aws:iam::%s:role/%s/%s', $account, $role->{Path}, $role_name;
+  my $timeout  = $self->get_timeout // $DEFAULT_LAMBDA_CREATE_TIMEOUT;
+
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  my $rsp = eval {
+    $lambda->CreateFunction(
+      { FunctionName => $function_name,
+        Timeout      => $timeout,
+        Code         => { ImageUri => "$image:latest" },
+        Role         => $role_arn,
+        PackageType  => 'Image',
+      }
+    );
+  };
+
+  print {*STDOUT} $rsp ? JSON->new->pretty->encode($rsp) : $EVAL_ERROR;
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub _lambda_get_function {
+########################################################################
+  my ( $self, $function_name ) = @_;
+
+  if ( !$function_name ) {
+    ($function_name) = $self->get_args;
+  }
+
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  return eval { $lambda->GetFunction( { FunctionName => $function_name } ); };
+}
+
+########################################################################
+sub _lambda_get_policy {
+########################################################################
+  my ( $self, $function_name ) = @_;
+
+  if ( !$function_name ) {
+    ($function_name) = $self->get_args;
+  }
+
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  return eval { $lambda->GetPolicy( { FunctionName => $function_name } ); };
+}
+
+########################################################################
+sub cmd_lambda_get_function {
+########################################################################
+  my ($self) = @_;
+
+  my ($function_name) = $self->get_args;
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  my $rsp = $self->_lambda_get_function($function_name);
+
+  print {*STDOUT} $rsp ? JSON->new->pretty->encode($rsp) : $EVAL_ERROR;
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_lambda_get_policy {
+########################################################################
+  my ($self) = @_;
+
+  my ($function_name) = $self->get_args;
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  my $rsp = $self->_lambda_get_policy($function_name);
+
+  print {*STDOUT} $rsp ? JSON->new->pretty->encode($rsp) : $EVAL_ERROR;
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_lambda_list_event_source_mappings {
+########################################################################
+  my ($self) = @_;
+
+  my ( $function_name, $arn ) = $self->get_args;
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  my $rsp = $lambda->ListEventSourceMappings(
+    { FunctionName   => $function_name,
+      EventSourceArn => $arn,
+    }
+  );
+
+  if ( !$rsp && $EVAL_ERROR ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  print {*STDOUT} JSON->new->pretty->encode($rsp);
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_lambda_create_event_source_mappings {
+########################################################################
+  my ($self) = @_;
+
+  my ( $function_name, $arn, $batch_size ) = $self->get_args;
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  my $rsp = $lambda->CreateEventSourceMapping(
+    { FunctionName   => $function_name,
+      EventSourceArn => $arn,
+      BatchSize      => $batch_size // $DEFAULT_EVENT_BATCH_SIZE,
+    }
+  );
+
+  if ( !$rsp && $EVAL_ERROR ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  print {*STDOUT} JSON->new->pretty->encode($rsp);
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_lambda_add_permission {
+########################################################################
+  my ($self) = @_;
+
+  my ( $function_name, $statement_id, $action, $principal, $source_arn ) = $self->get_args;
+
+  die "ERROR: usage alr-builder-helper add-permission function-name statement-id action principal source-arn\n"
+    if !$function_name || !$statement_id || !$action || !$principal || !$source_arn;
+
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+  $lambda->AddPermission(
+    { FunctionName => $function_name,
+      StatementId  => $statement_id,
+      Action       => $action,
+      Principal    => $principal,
+      $source_arn ? ( SourceArn => $source_arn ) : (),
+    }
+  );
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_lambda_create_function_url_config {
+########################################################################
+  my ($self) = @_;
+
+  my ( $function_name, $invoke_mode ) = $self->get_args;
+
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  my $rsp = $lambda->CreateFunctionUrlConfig(
+    { FunctionName => $function_name,
+      AuthType     => 'NONE',
+      InvokeMode   => uc( $invoke_mode // 'RESPONSE_STREAM' ),
+    }
+  );
+
+  if ( !$rsp && $EVAL_ERROR ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  print {*STDOUT} JSON->new->pretty->encode($rsp);
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_lambda_get_function_url_config {
+########################################################################
+  my ($self) = @_;
+
+  my ($function_name) = $self->get_args;
+
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  my $rsp = $lambda->GetFunctionUrlConfig( { FunctionName => $function_name } );
+
+  if ( !$rsp && $EVAL_ERROR ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  if ($rsp) {
+    print {*STDOUT} JSON->new->pretty->encode($rsp);
+  }
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_lambda_delete_function_url_config {
+########################################################################
+  my ($self) = @_;
+
+  my ($function_name) = $self->get_args;
+
+  require Amazon::API::Lambda;
+
+  my $lambda = Amazon::API::Lambda->new;
+
+  my $rsp = $lambda->DeleteFunctionUrlConfig( { FunctionName => $function_name } );
+
+  if ( !$rsp && $EVAL_ERROR ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  if ($rsp) {
+    print {*STDOUT} JSON->new->pretty->encode($rsp);
+  }
+
+  return $SUCCESS;
+}
+
+1;

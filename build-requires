@@ -1,0 +1,11 @@
+CPAN::Maker@1.9.0
+File::ShareDir
+File::ShareDir::Install
+Markdown::Render
+Module::CPANfile
+Module::ScanDeps::Static
+Pod::Markdown
+Role::Tiny
+Test::Exit
+Test::Output
+YAML::Tiny

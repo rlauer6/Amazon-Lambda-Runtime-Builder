@@ -1,0 +1,17 @@
+{
+    "Records": [{
+        "EventSource": "aws:sns",
+        "EventVersion": "1.0",
+        "EventSubscriptionArn": "arn:aws:sns:us-east-1:123456789012:my-topic:abc123",
+        "Sns": {
+            "Type": "Notification",
+            "MessageId": "abc123",
+            "TopicArn": "arn:aws:sns:us-east-1:123456789012:my-topic",
+            "Subject": "Test Subject",
+            "Message": "{\"message\":\"Hello from SNS!\"}",
+            "Timestamp": "2026-03-19T00:00:00.000Z",
+            "SignatureVersion": "1",
+            "MessageAttributes": {}
+        }
+    }]
+}

@@ -1,0 +1,41 @@
+package Amazon::Lambda::Runtime::Builder::Role::SQS;
+
+use strict;
+use warnings;
+
+use CLI::Simple::Constants qw(:booleans);
+use Data::Dumper;
+use English qw(-no_match_vars);
+use JSON;
+
+use Role::Tiny;
+
+########################################################################
+sub cmd_sqs_list_queues {
+########################################################################
+  my ($self) = @_;
+
+  require Amazon::API::SQS;
+  my $sqs = Amazon::API::SQS->new;
+
+  my $rsp = eval { $sqs->ListQueues(); };
+
+  return $self->_check_response($rsp);
+}
+
+########################################################################
+sub cmd_sqs_create_queue {
+########################################################################
+  my ($self) = @_;
+
+  my ($queue_name) = $self->get_args;
+
+  require Amazon::API::SQS;
+  my $sqs = Amazon::API::SQS->new;
+
+  my $rsp = eval { $sqs->CreateQueue( { QueueName => $queue_name } ); };
+
+  return $self->_check_response($rsp);
+}
+
+1;

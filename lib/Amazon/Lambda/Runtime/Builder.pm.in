@@ -1,0 +1,589 @@
+package Amazon::Lambda::Runtime::Builder;
+
+use strict;
+use warnings;
+
+use Carp;
+use Carp::Always;
+use CLI::Simple::Constants qw(:booleans :chars);
+use CLI::Simple::Utils qw(slurp slurp_json);
+use Data::Dumper;
+use File::ShareDir qw(dist_dir);
+use English qw(-no_match_vars);
+
+use Role::Tiny::With;
+
+with 'Amazon::Lambda::Runtime::Builder::Role::CheckDeps';
+with 'Amazon::Lambda::Runtime::Builder::Role::Install';
+
+__PACKAGE__->use_log4perl( level => 'info' );
+
+our $VERSION = '@PACKAGE_VERSION@';
+
+use parent qw(CLI::Simple);
+
+caller or __PACKAGE__->main();
+
+########################################################################
+sub init {
+########################################################################
+  my ($self) = @_;
+
+  my $dist_dir = dist_dir('Amazon-Lambda-Runtime-Builder');
+
+  my $manifest = slurp_json( sprintf '%s/MANIFEST.json', $dist_dir );
+  $manifest = $manifest->{files};
+
+  $self->set_manifest($manifest);
+
+  $self->set_dist_dir($dist_dir);
+
+  return;
+}
+
+########################################################################
+sub main {
+########################################################################
+
+  my %commands = (
+    check   => \&cmd_dep_check,
+    install => \&cmd_install,
+    default => \&cmd_install,
+  );
+
+  my @option_specs = qw(
+    help|h
+    install-dir|i=s
+    log-level|l=s
+    profile|p=s
+  );
+
+  my $cli = Amazon::Lambda::Runtime::Builder->new(
+    commands      => \%commands,
+    option_specs  => \@option_specs,
+    extra_options => [qw(dist_dir manifest)],
+  );
+
+  $cli->run();
+
+  return $SUCCESS;
+}
+
+1;
+
+__END__
+
+=pod
+
+=encoding utf8
+
+=head1 NAME
+
+Amazon::Lambda::Runtime::Builder - Project scaffolding and environment
+checker for Perl Lambda container images
+
+=head1 SYNOPSIS
+
+  # Scaffold a new project in the current directory
+  alr-builder install
+
+  # Scaffold into a specific directory
+  alr-builder install --install-dir /path/to/my-lambda
+
+  # Verify tools and IAM permissions before your first build
+  alr-builder check
+
+=head1 DESCRIPTION
+
+C<Amazon::Lambda::Runtime::Builder> is the companion deployment tool for
+L<Amazon::Lambda::Runtime>. It handles everything outside of the Perl
+runtime itself: scaffolding a new project directory, verifying your build
+environment, and documenting the full build and deploy workflow.
+
+It provides two commands via the C<alr-builder> CLI:
+
+=over 4
+
+=item * B<install> - copies the project scaffold (Dockerfile, Makefile,
+handler template, cpanfile, and test fixtures) into a target directory.
+
+=item * B<check> - verifies that required system tools are present on
+your C<PATH> and, if the optional IAM modules are installed, confirms
+that your AWS credentials have sufficient permissions to build and deploy.
+
+=back
+
+=head1 COMMANDS
+
+=head2 install
+
+  alr-builder install [--install-dir DIR]
+
+Copies the project scaffold from the distribution's C<share/> directory
+into the target directory (defaults to the current working directory).
+Creates the directory if it does not exist.
+
+The following files are installed:
+
+=over 4
+
+=item * C<Dockerfile> - multi-stage build using C<debian:trixie-slim>.
+The builder stage installs Perl, build tools, and your C<cpanfile>
+dependencies via Carton. The runtime stage is a minimal image containing
+only the Perl interpreter, runtime libraries, and your handler.
+
+=item * C<LambdaHandler.pm.in> - handler template with stub
+implementations for SQS, SNS, S3, and EventBridge events, plus a
+streaming response example for Function URL invocations. Rename or copy
+this file and customize it for your Lambda.
+
+=item * C<Makefile> (installed as C<Makefile.build>, renamed on install)
+- provides targets for the complete build and deployment workflow. See
+L</WORKFLOW> and L</MAKEFILE TARGETS>.
+
+=item * C<cpanfile> - starting point for your Perl dependencies. Add
+modules here.
+
+=item * Test fixture makefiles - C<sqs-test.mk>, C<sns-test.mk>,
+C<s3-test.mk>, C<eventbridge-test.mk>, C<streaming-test.mk> - provide
+targets for creating and testing each event source trigger.
+
+=item * C<payload.json>, C<payload-sns.json> - sample invocation payloads
+for C<make invoke> and C<make test-sns>.
+
+=item * C<ecr-create-repo.mk> - creates the ECR repository if it does
+not already exist.
+
+=item * C<policies> - IAM managed policy ARNs to attach to the Lambda
+execution role. Add one ARN per line; lines beginning with C<#> are
+comments.
+
+=back
+
+=head2 check
+
+  alr-builder check
+
+Verifies that your environment is ready to build and deploy. Checks two
+things:
+
+B<Required system tools> - C<docker> and C<make> must be on your
+C<PATH>. C<curl> is checked as an optional tool. Missing required
+tools are reported as errors.
+
+B<IAM permissions> - if L<Amazon::API::IAM>, L<Amazon::API::STS>, and
+L<Amazon::Credentials> are installed, calls C<SimulatePrincipalPolicy>
+using your current credentials to confirm your IAM identity has the
+permissions required to build and deploy. See L</REQUIRED IAM PERMISSIONS>
+for the full list.
+
+If the IAM modules are not installed, tool checks still run but permission
+checking is skipped with a warning.
+
+=head1 OPTIONS
+
+=over 4
+
+=item C<--install-dir|-i> DIR
+
+Target directory for C<install>. Defaults to the current working directory.
+
+=item C<--log-level|-l> LEVEL
+
+Log verbosity. Accepts Log4perl level names: C<trace>, C<debug>, C<info>
+(default), C<warn>, C<error>, C<fatal>.
+
+=item C<--help|-h>
+
+Display usage information.
+
+=back
+
+=head1 WORKFLOW
+
+The typical workflow for a new Lambda function:
+
+=over 4
+
+=item 1.
+
+B<Scaffold the project>:
+
+  alr-builder install --install-dir my-lambda
+  cd my-lambda
+
+=item 2.
+
+B<Verify your environment>:
+
+  alr-builder check
+
+=item 3.
+
+B<Implement your handler> - edit C<LambdaHandler.pm.in> or create your
+own handler module. Add dependencies to C<cpanfile>.
+
+=item 4.
+
+B<First-time deployment> - builds the image, pushes to ECR, creates the
+IAM role and Lambda function:
+
+  make lambda-function
+
+=item 5.
+
+B<Test>:
+
+  make invoke
+
+=item 6.
+
+B<Deploy subsequent changes>:
+
+  make update-function
+
+=back
+
+=head2 Phase 1 - Build the container image
+
+Lambda runs your handler inside an OCI-compliant container image. The
+image must contain a Perl interpreter, your CPAN dependencies,
+C<Amazon::Lambda::Runtime>, the C<bootstrap> entrypoint, the C<plambda.pl>
+driver, and your handler module.
+
+The installed Dockerfile handles all of this. Build with:
+
+  make image
+
+The key Dockerfile directives that wire everything together:
+
+ ARG LAMBDA_MODULE=LambdaHandler.pm
+ COPY ${LAMBDA_MODULE} /usr/src/app/local/lib/perl5
+
+ ENV PERL5LIB=/usr/src/app/local/lib/perl5
+ ENV LAMBDA_MODULE=${LAMBDA_MODULE}
+
+ ENTRYPOINT ["/usr/local/bin/bootstrap"]
+
+C<ENV LAMBDA_MODULE> tells C<bootstrap> which handler to load.
+Set C<LAMBDA_MODULE> at build time to use a different handler module:
+
+  make image LAMBDA_MODULE=MyHandler.pm
+
+=head2 Phase 2 - Deploy and create the Lambda function
+
+Once the image is built it must be pushed to ECR and the Lambda function
+created or updated.
+
+For a first-time deployment, a single target runs the full dependency
+chain automatically:
+
+  make lambda-function
+
+This runs: C<ecr-repo> => C<deploy> => C<lambda-role> => C<lambda-policies>
+=> C<lambda-function>. Each step is idempotent - re-running is always safe.
+Sentinel files track completed steps so C<make> skips what already exists.
+
+To deploy a code change:
+
+  make update-function
+
+This rebuilds the image, pushes to ECR using the image digest (never
+C<:latest>), and updates the Lambda function code.
+
+=head2 Phase 3 - Configure event triggers
+
+The installed Makefile already includes all five trigger makefiles, so
+all trigger targets are available immediately. Use whichever targets
+apply to your Lambda:
+
+  make lambda-sqs-trigger QUEUE_NAME=my-queue
+  make lambda-s3-trigger  BUCKET_NAME=my-bucket
+  make lambda-eventbridge-trigger
+  make lambda-function-url
+  make test-streaming
+
+See L</MAKEFILE TARGETS> for the full list of targets provided by each
+trigger makefile and the variables that control their behavior.
+
+=head2 The policies File
+
+The C<policies> file controls which IAM managed policies are attached
+to the Lambda execution role. Add one policy ARN per line:
+
+ # required - CloudWatch logging
+ arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+ # uncomment for SQS trigger
+ # arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+
+ # uncomment for S3 read access
+ # arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+Apply changes at any time:
+
+  make update-policies
+
+B<Note:> receiving an event from a service does not automatically grant
+your handler permission to call that service's APIs. An S3 trigger allows
+Lambda to invoke your function - it does not allow your function to read
+or write S3 objects. For broad access, add or uncomment the appropriate
+managed policy ARN in the C<policies> file and run C<make update-policies>.
+For access to a specific resource - a particular bucket, queue, or topic -
+create a custom IAM policy that scopes the permissions to that resource ARN
+and attach it to the execution role (C<ROLE_NAME>) via the AWS console or
+CLI, then add its ARN to the C<policies> file so C<make update-policies>
+keeps it attached on subsequent deployments.
+
+=head1 MAKEFILE VARIABLES
+
+Set these in your environment or pass as C<make> arguments:
+
+=over 4
+
+=item C<AWS_PROFILE>
+
+AWS profile. Default: C<default>
+
+=item C<REGION>
+
+AWS region. Default: C<us-east-1>
+
+=item C<REPO_NAME>
+
+ECR repository name. Default: C<perl-lambda>
+
+=item C<FUNCTION_NAME>
+
+Lambda function name. Default: C<lambda-handler>
+
+=item C<ROLE_NAME>
+
+IAM execution role name. Default: C<lambda-role>
+
+=item C<PERL_LAMBDA>
+
+Docker image name (local). Default: C<perl-lambda>
+
+=item C<LAMBDA_MODULE>
+
+Your handler module filename. Default: C<LambdaHandler.pm>
+
+=item C<PAYLOAD>
+
+Payload file for C<make invoke>. Default: C<payload.json>
+
+=item C<AWS_ACCOUNT>
+
+AWS account ID. Resolved automatically via C<alr-helper get-account>
+if not set. Set it explicitly to avoid the STS call:
+
+  export AWS_ACCOUNT=$(alr-helper get-account)
+
+=item C<TIMEOUT>
+
+Lambda function timeout in seconds. Default: C<30>
+
+=item C<QUEUE_NAME>
+
+SQS queue name. Default: C<lambda-runtime>
+
+=item C<BATCH_SIZE>
+
+SQS messages per invocation. Default: C<10>
+
+=item C<BUCKET_NAME>
+
+S3 bucket for C<make lambda-s3-trigger>. Default: C<my-bucket>
+
+=item C<S3_EVENT>
+
+S3 event type. Default: C<s3:ObjectCreated:*>
+
+=item C<RULE_NAME>
+
+EventBridge rule name. Default: C<lambda-handler-test>
+
+=item C<SCHEDULE_EXPRESSION>
+
+EventBridge schedule. Default: C<rate(1 minute)>
+
+=item C<INVOKE_MODE>
+
+Lambda Function URL invoke mode. Default: C<RESPONSE_STREAM>
+
+=back
+
+=head1 MAKEFILE TARGETS
+
+=head2 Primary Targets
+
+=over 4
+
+=item C<lambda-function>
+
+First-time deployment. Runs the full dependency chain: ECR repository,
+IAM role, policies, image build, push, and function creation. Run once
+per function.
+
+=item C<update-function>
+
+Deploy a code change. Rebuilds the image, pushes to ECR, and updates the
+Lambda function code.
+
+=item C<invoke>
+
+Test the function with C<$(PAYLOAD)> and print the response.
+
+=item C<update-policies>
+
+Re-attach policies after editing the C<policies> file.
+
+=item C<clean>
+
+Remove local sentinel files. AWS resources are not affected.
+
+=back
+
+=head2 Event Trigger Targets
+
+=over 4
+
+=item C<lambda-sqs-trigger>
+
+Creates an SQS queue (C<QUEUE_NAME>) and attaches it as an event source.
+Requires C<AWSLambdaSQSQueueExecutionRole> in the C<policies> file.
+
+=item C<lambda-s3-trigger>
+
+Configures S3 bucket notifications to invoke the Lambda on C<S3_EVENT>
+events.
+
+=item C<lambda-eventbridge-trigger>
+
+Registers the Lambda as the target of an EventBridge scheduled rule.
+
+=item C<enable-eventbridge-rule> / C<disable-eventbridge-rule>
+
+Enables or disables the EventBridge rule without deleting infrastructure.
+Use C<disable-eventbridge-rule> after testing to stop scheduled invocations.
+
+=item C<delete-eventbridge-rule>
+
+Removes targets and deletes the rule. Targets must be removed before the
+rule can be deleted.
+
+=item C<lambda-function-url>
+
+Creates a Lambda Function URL with C<auth-type NONE> and
+C<InvokeMode=$(INVOKE_MODE)>.
+
+=item C<test-streaming>
+
+Invokes the Function URL with C<curl -sN> to test streaming responses.
+
+=back
+
+=head2 Internal Targets
+
+Called automatically as dependencies - you should not need to invoke
+these directly:
+
+C<image> - builds the Docker image.
+C<ecr-repo> - creates the ECR repository if it does not exist.
+C<deploy> - logs in to ECR and pushes the image using the image digest.
+C<lambda-role> - creates the IAM execution role if it does not exist.
+C<lambda-policies> - attaches all policies in the C<policies> file.
+C<policy-document> - generates the IAM assume-role trust policy JSON.
+
+=head1 REQUIRED IAM PERMISSIONS
+
+The C<check> command verifies these permissions via
+C<SimulatePrincipalPolicy>. You will need them to run the full build and
+deploy workflow.
+
+=head3 ECR
+
+ ecr:CreateRepository         ecr:DescribeRepositories
+ ecr:GetAuthorizationToken    ecr:BatchCheckLayerAvailability
+ ecr:PutImage                 ecr:InitiateLayerUpload
+ ecr:UploadLayerPart          ecr:CompleteLayerUpload
+ ecr:PutLifecyclePolicy       ecr:GetLifecyclePolicy
+
+=head3 IAM
+
+ iam:GetRole                  iam:CreateRole
+ iam:AttachRolePolicy         iam:PassRole
+ iam:ListAttachedRolePolicies
+
+B<Note:> C<iam:PassRole> is frequently overlooked. Its absence produces
+a confusing C<InvalidParameterValueException> stating the role cannot be
+assumed by Lambda even though the role exists and appears correct.
+
+=head3 Lambda
+
+ lambda:GetFunction              lambda:CreateFunction
+ lambda:UpdateFunctionCode       lambda:UpdateFunctionConfiguration
+ lambda:GetFunctionConfiguration lambda:InvokeFunction
+ lambda:CreateEventSourceMapping lambda:ListEventSourceMappings
+ lambda:GetPolicy                lambda:AddPermission
+ lambda:RemovePermission         lambda:CreateFunctionUrlConfig
+ lambda:GetFunctionUrlConfig     lambda:DeleteFunctionUrlConfig
+
+=head3 SQS / SNS / S3 / EventBridge / STS
+
+ sqs:ListQueues                  sqs:CreateQueue
+ sns:ListTopics                  sns:CreateTopic
+ sns:Subscribe                   sns:GetTopicAttributes
+ s3:CreateBucket                 s3:ListBuckets
+ s3:PutBucketNotificationConfiguration
+ events:DescribeRule             events:PutRule
+ events:PutTargets               events:RemoveTargets
+ events:DeleteRule               events:EnableRule
+ events:DisableRule
+ sts:GetCallerIdentity
+
+=head3 Handler Runtime Permissions
+
+C<AWSLambdaBasicExecutionRole> covers CloudWatch logging only. Any AWS
+APIs your handler calls directly require additional policies in the
+C<policies> file. For example, a handler that reads S3 objects needs
+C<AmazonS3ReadOnlyAccess> even if its trigger is an S3 event notification
+- the trigger and the API access are governed by separate policies.
+
+=head1 OPTIONAL DEPENDENCIES
+
+IAM permission checking in C<check> requires:
+
+=over 4
+
+=item * L<Amazon::API::IAM>
+
+=item * L<Amazon::API::STS>
+
+=item * L<Amazon::Credentials>
+
+=back
+
+These are not hard dependencies - the tool is fully functional without
+them, but C<check> will only verify system tools.
+
+=head1 SEE ALSO
+
+L<Amazon::Lambda::Runtime> - the runtime library your handler inherits from
+
+L<Amazon::Credentials> - credential provider used for IAM permission checking
+
+L<Amazon::API::IAM>, L<Amazon::API::STS> - AWS API clients used by C<check>
+
+=head1 AUTHOR
+
+Rob Lauer - E<lt>rlauer@treasurersbriefcase.comE<gt>
+
+=head1 LICENSE
+
+(c) Copyright 2019-2026 Robert C. Lauer. All rights reserved. This
+module is free software. It may be used, redistributed and/or modified
+under the same terms as Perl itself.
+
+=cut

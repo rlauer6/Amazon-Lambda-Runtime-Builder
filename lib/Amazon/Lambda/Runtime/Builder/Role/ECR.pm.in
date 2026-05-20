@@ -1,0 +1,169 @@
+package Amazon::Lambda::Runtime::Builder::Role::ECR;
+
+use strict;
+use warnings;
+
+use CLI::Simple::Constants qw(:booleans);
+use Data::Dumper;
+use English qw(-no_match_vars);
+use Role::Tiny;
+
+########################################################################
+sub cmd_ecr_create_repository {
+########################################################################
+  my ($self) = @_;
+
+  my ($repo_name) = $self->get_args;
+
+  require Amazon::API::ECR;
+
+  my $ecr = Amazon::API::ECR->new;
+
+  my $rsp = eval { return $ecr->CreateRepository( { repositoryName => $repo_name } ); };
+
+  if ( !$rsp ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  print {*STDOUT} JSON->new->pretty->encode($rsp);
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_ecr_describe_repositories {
+########################################################################
+  my ($self) = @_;
+
+  my ($repo_name) = $self->get_args;
+
+  require Amazon::API::ECR;
+
+  my $ecr = Amazon::API::ECR->new;
+
+  my $rsp = eval { return $ecr->DescribeRepositories( { repositoryName => $repo_name } ); };
+
+  if ( !$rsp ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  print {*STDOUT} JSON->new->pretty->encode($rsp);
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_ecr_get_lifecycle_policy {
+########################################################################
+  my ($self) = @_;
+
+  my ($repo_name) = $self->get_args;
+
+  require Amazon::API::ECR;
+
+  my $ecr = Amazon::API::ECR->new;
+
+  my $rsp = eval { return $ecr->GetLifecyclePolicy( { repositoryName => $repo_name } ); };
+
+  if ( !$rsp ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  print {*STDOUT} JSON->new->pretty->encode($rsp);
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_ecr_put_lifecycle_policy {
+########################################################################
+  my ($self) = @_;
+
+  my ($repo_name) = $self->get_args;
+
+  my $lifecycle_policy = {
+    rule => [
+      { rulePriority => 1,
+        selection    => {
+          tagStatus   => 'untagged',
+          countType   => 'sinceImagePushed',
+          countUnit   => 'days',
+          countNumber => 1
+        },
+        action => { type => 'expire' },
+      },
+    ]
+  };
+
+  require Amazon::API::ECR;
+
+  my $ecr = Amazon::API::ECR->new;
+
+  my $rsp = eval {
+    return $ecr->PutLifecyclePolicy(
+      { repositoryName      => $repo_name,
+        lifecyclePolicyText => encode_json($lifecycle_policy),
+      }
+    );
+  };
+
+  if ( !$rsp ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  print {*STDOUT} JSON->new->pretty->encode($rsp);
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_ecr_describe_images {
+########################################################################
+  my ($self) = @_;
+
+  my ($repo_name) = $self->get_args;
+
+  require Amazon::API::ECR;
+
+  my $ecr = Amazon::API::ECR->new;
+
+  my $rsp = eval { return $ecr->DescribeImages( { repositoryName => $repo_name } ); };
+
+  if ( !$rsp ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  my ($image_details) = reverse sort { $a->{imagePushedAt} cmp $b->{imagePushedAt} } @{ $rsp->{imageDetails} || [] };
+
+  print {*STDOUT} JSON->new->pretty->encode($image_details);
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub cmd_ecr_get_login_password {
+########################################################################
+  my ($self) = @_;
+
+  require Amazon::API::ECR;
+  require MIME::Base64;
+
+  my $ecr = Amazon::API::ECR->new;
+
+  my $token = $ecr->GetAuthorizationToken;
+
+  my ($decoded) = split /:/xsm, $token->{authorizationData}->[0]->{authorizationToken}, 2;
+
+  my ( undef, $password ) = split /:/, MIME::Base64::decode_base64($decoded);
+
+  print {*STDOUT} $password;
+
+  return $SUCCESS;
+}
+
+1;

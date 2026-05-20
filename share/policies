@@ -1,0 +1,28 @@
+# Basic Lambda execution (CloudWatch logging) - required
+arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+# Event source triggers - uncomment as needed
+# arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+# arn:aws:iam::aws:policy/service-role/AWSLambdaKinesisExecutionRole
+# arn:aws:iam::aws:policy/service-role/AWSLambdaDynamoDBExecutionRole
+
+# S3 access
+# arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+# arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+# SNS
+# arn:aws:iam::aws:policy/AmazonSNSReadOnlyAccess
+# arn:aws:iam::aws:policy/AmazonSNSFullAccess
+
+# SQS (for handlers that PRODUCE messages, not just consume)
+# arn:aws:iam::aws:policy/AmazonSQSReadOnlyAccess
+# arn:aws:iam::aws:policy/AmazonSQSFullAccess
+
+# Secrets Manager (common for database credentials)
+# arn:aws:iam::aws:policy/SecretsManagerReadWrite
+
+# SSM Parameter Store
+# arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+
+# ECR (if your handler pulls images or inspects repositories)
+# arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
