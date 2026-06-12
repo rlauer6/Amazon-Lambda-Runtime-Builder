@@ -7,9 +7,7 @@ help: ## show this help message
 	@echo "Usage: make [target] [VARIABLE=value]"
 	@echo ""
 	@echo "Targets:"
-	@grep -Eh '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) \
-	  | sort \
-	  | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-34s %s\n", $$1, $$2}'
+	@perl -MFile::Basename=basename -ne '/^([^:]+):\s[^#]*##\s*(.*)/ && printf "  %-34s %s\n", basename($$1), $$2' $(sort $(MAKEFILE_LIST) $(wildcard .includes/*.mk)) | sort
 	@echo ""
 	@echo "Core variables (override in project.mk):"
 	@echo "  FUNCTION_NAME=name              Lambda function name (default: lambda-handler)"
@@ -35,7 +33,8 @@ help: ## show this help message
 	@echo "  S3_EVENT=event                  S3 event type (default: s3:ObjectCreated:*)"
 	@echo "  KEY_PREFIX=prefix               S3 key prefix filter for S3 trigger"
 	@echo "  QUEUE_NAME=name                 SQS queue name (default: lambda-runtime)"
-	@echo "  BATCH_SIZE=n                    SQS batch size (default: 10)"
+	@echo "  DLQ_NAME=name                   SQS dead letter queue name (default: QUEUE_NAME-dlq)"
+	@echo "  BATCH_SIZE=n                    SQS batch size (default: 1)"
 	@echo "  RULE_NAME=name                  EventBridge rule name"
 	@echo "  SCHEDULE_EXPRESSION=expr        EventBridge schedule (default: rate(1 minute))"
 	@echo "  INVOKE_MODE=mode                Lambda URL invoke mode (default: RESPONSE_STREAM)"

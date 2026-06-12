@@ -10,15 +10,33 @@ use JSON;
 
 use Role::Tiny;
 
+{
+  my $events;
+
 ########################################################################
-sub cmd_event_bridge_describe_rule {
+  sub _events {
+########################################################################
+    my ($self) = @_;
+
+    return $events
+      if $events;
+
+    require Amazon::API::EventBridge;
+
+    $events = Amazon::API::EventBridge->new( log_level => $self->get_log_level );
+
+    return $events;
+  }
+}
+
+########################################################################
+sub cmd_eventbridge_describe_rule {
 ########################################################################
   my ($self) = @_;
 
   my ($rule_name) = $self->get_args;
 
-  require Amazon::API::EventBridge;
-  my $events = Amazon::API::EventBridge->new;
+  my $events = $self->_events;
 
   my $rsp = eval { $events->DescribeRule( { Name => $rule_name } ); };
 
@@ -26,13 +44,13 @@ sub cmd_event_bridge_describe_rule {
 }
 
 ########################################################################
-sub cmd_event_bridge_put_rule_expression {
+sub cmd_eventbridge_put_rule_expression {
 ########################################################################
   my ($self) = @_;
 
   my ( $rule_name, $expression, $state ) = $self->get_args;
 
-  my $rsp = $self->_event_bridge_put_rule(
+  my $rsp = $self->_eventbridge_put_rule(
     expression => $expression,
     state      => $state,
     rule_name  => $rule_name
@@ -42,15 +60,14 @@ sub cmd_event_bridge_put_rule_expression {
 }
 
 ########################################################################
-sub cmd_event_bridge_put_lambda_target {
+sub cmd_eventbridge_put_lambda_target {
 ########################################################################
   my ($self) = @_;
 
   my ( $function_name, $rule_name, $id ) = $self->get_args;
-  $id //= 'lambda-handler';
+  $id //= $function_name;
 
-  require Amazon::API::EventBridge;
-  my $events = Amazon::API::EventBridge->new;
+  my $events = $self->_events;
 
   my $lambda_function = $self->_lambda_get_function($function_name);
   my $function_arn    = $lambda_function->{Configuration}{FunctionArn};
@@ -69,13 +86,13 @@ sub cmd_event_bridge_put_lambda_target {
 }
 
 ########################################################################
-sub cmd_event_bridge_put_rule_pattern {
+sub cmd_eventbridge_put_rule_pattern {
 ########################################################################
   my ($self) = @_;
 
   my ( $rule_name, $pattern, $state ) = $self->get_args;
 
-  my $rsp = $self->_event_bridge_put_rule(
+  my $rsp = $self->_eventbridge_put_rule(
     pattern   => $pattern,
     state     => $state,
     rule_name => $rule_name
@@ -85,7 +102,7 @@ sub cmd_event_bridge_put_rule_pattern {
 }
 
 ########################################################################
-sub _event_bridge_put_rule {
+sub _eventbridge_put_rule {
 ########################################################################
   my ( $self, %args ) = @_;
 
@@ -100,9 +117,7 @@ sub _event_bridge_put_rule {
   die "ERROR: set only one of expression or pattern\n"
     if $expression && $pattern;
 
-  require Amazon::API::EventBridge;
-
-  my $events = Amazon::API::EventBridge->new;
+  my $events = $self->_events;
 
   my $rsp = $events->PutRule(
     { Name  => $rule_name,
@@ -116,14 +131,13 @@ sub _event_bridge_put_rule {
 }
 
 ########################################################################
-sub cmd_event_bridge_disable_rule {
+sub cmd_eventbridge_disable_rule {
 ########################################################################
   my ($self) = @_;
 
   my ($rule_name) = $self->get_args;
 
-  require Amazon::API::EventBridge;
-  my $events = Amazon::API::EventBridge->new;
+  my $events = $self->_events;
 
   my $rsp = $events->DisableRule( { Name => $rule_name } );
 
@@ -132,55 +146,52 @@ sub cmd_event_bridge_disable_rule {
     return $FAILURE;
   }
 
-  return $self->cmd_event_bridge_describe_rule;
+  return $self->cmd_eventbridge_describe_rule;
 }
 
 ########################################################################
-sub cmd_event_bridge_enable_rule {
+sub cmd_eventbridge_enable_rule {
 ########################################################################
   my ($self) = @_;
 
   my ($rule_name) = $self->get_args;
 
-  require Amazon::API::EventBridge;
-  my $events = Amazon::API::EventBridge->new;
+  my $events = $self->_events;
 
-  my $rsp = $events->EnableRule( { Name => $rule_name } );
+  my $rsp = eval { return $events->EnableRule( { Name => $rule_name } ); };
 
   if ( !$rsp && $EVAL_ERROR ) {
     print {*STDERR} $EVAL_ERROR;
     return $FAILURE;
   }
 
-  return $self->cmd_event_bridge_describe_rule;
+  return $self->cmd_eventbridge_describe_rule;
 }
 
 ########################################################################
-sub cmd_event_bridge_remove_targets {
+sub cmd_eventbridge_remove_targets {
 ########################################################################
   my ($self) = @_;
 
   my ( $rule_name, @ids ) = $self->get_args;
 
-  require Amazon::API::EventBridge;
-  my $events = Amazon::API::EventBridge->new;
+  my $events = $self->_events;
 
-  my $rsp = $events->RemoveTargets( { Name => $rule_name, Ids => [@ids] } );
+  my $rsp = eval { $events->RemoveTargets( { Name => $rule_name, Ids => [@ids] } ); };
 
   return $self->_check_response($rsp);
 }
 
 ########################################################################
-sub cmd_event_bridge_delete_rule {
+sub cmd_eventbridge_delete_rule {
 ########################################################################
   my ($self) = @_;
 
   my ($rule_name) = $self->get_args;
 
-  require Amazon::API::EventBridge;
-  my $events = Amazon::API::EventBridge->new;
+  my $events = $self->_events;
 
-  my $rsp = $events->DeleteRule( { Name => $rule_name } );
+  my $rsp = eval { $events->DeleteRule( { Name => $rule_name } ); };
 
   return $self->_check_response($rsp);
 }

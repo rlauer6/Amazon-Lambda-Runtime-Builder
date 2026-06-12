@@ -8,6 +8,25 @@ use Data::Dumper;
 use English qw(-no_match_vars);
 use Role::Tiny;
 
+{
+  my $ecr;
+
+########################################################################
+  sub _ecr {
+########################################################################
+    my ($self) = @_;
+
+    return $ecr
+      if $ecr;
+
+    require Amazon::API::ECR;
+
+    $ecr = Amazon::API::ECR->new( log_level => $self->get_log_level );
+
+    return $ecr;
+  }
+}
+
 ########################################################################
 sub cmd_ecr_create_repository {
 ########################################################################
@@ -15,9 +34,7 @@ sub cmd_ecr_create_repository {
 
   my ($repo_name) = $self->get_args;
 
-  require Amazon::API::ECR;
-
-  my $ecr = Amazon::API::ECR->new;
+  my $ecr = $self->_ecr;
 
   my $rsp = eval { return $ecr->CreateRepository( { repositoryName => $repo_name } ); };
 
@@ -38,11 +55,9 @@ sub cmd_ecr_describe_repositories {
 
   my ($repo_name) = $self->get_args;
 
-  require Amazon::API::ECR;
+  my $ecr = $self->_ecr;
 
-  my $ecr = Amazon::API::ECR->new;
-
-  my $rsp = eval { return $ecr->DescribeRepositories( { repositoryName => $repo_name } ); };
+  my $rsp = eval { return $ecr->DescribeRepositories( { repositoryNames => [$repo_name] } ); };
 
   if ( !$rsp ) {
     print {*STDERR} $EVAL_ERROR;
@@ -61,9 +76,7 @@ sub cmd_ecr_get_lifecycle_policy {
 
   my ($repo_name) = $self->get_args;
 
-  require Amazon::API::ECR;
-
-  my $ecr = Amazon::API::ECR->new;
+  my $ecr = $self->_ecr;
 
   my $rsp = eval { return $ecr->GetLifecyclePolicy( { repositoryName => $repo_name } ); };
 
@@ -82,7 +95,9 @@ sub cmd_ecr_put_lifecycle_policy {
 ########################################################################
   my ($self) = @_;
 
-  my ($repo_name) = $self->get_args;
+  my ( $repo_name, $count_number, $count_unit ) = $self->get_args;
+  $count_unit   //= 'days';
+  $count_number //= 1;
 
   my $lifecycle_policy = {
     rule => [
@@ -90,17 +105,15 @@ sub cmd_ecr_put_lifecycle_policy {
         selection    => {
           tagStatus   => 'untagged',
           countType   => 'sinceImagePushed',
-          countUnit   => 'days',
-          countNumber => 1
+          countUnit   => $count_unit,
+          countNumber => $count_number,
         },
         action => { type => 'expire' },
       },
     ]
   };
 
-  require Amazon::API::ECR;
-
-  my $ecr = Amazon::API::ECR->new;
+  my $ecr = $self->_ecr;
 
   my $rsp = eval {
     return $ecr->PutLifecyclePolicy(
@@ -127,9 +140,7 @@ sub cmd_ecr_describe_images {
 
   my ($repo_name) = $self->get_args;
 
-  require Amazon::API::ECR;
-
-  my $ecr = Amazon::API::ECR->new;
+  my $ecr = $self->_ecr;
 
   my $rsp = eval { return $ecr->DescribeImages( { repositoryName => $repo_name } ); };
 
@@ -150,10 +161,9 @@ sub cmd_ecr_get_login_password {
 ########################################################################
   my ($self) = @_;
 
-  require Amazon::API::ECR;
   require MIME::Base64;
 
-  my $ecr = Amazon::API::ECR->new;
+  my $ecr = $self->_ecr;
 
   my $token = $ecr->GetAuthorizationToken;
 

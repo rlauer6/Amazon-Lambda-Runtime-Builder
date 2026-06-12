@@ -7,27 +7,43 @@ use CLI::Simple::Constants qw(:booleans);
 use Data::Dumper;
 use English qw(-no_match_vars);
 use JSON;
+
 use Role::Tiny;
 
-use Readonly;
-Readonly::Scalar our $DEFAULT_REGION => 'us-east-1';
+{
+  my $s3;
+
+########################################################################
+  sub _s3 {
+########################################################################
+    my ($self) = @_;
+
+    return $s3
+      if $s3;
+
+    require Amazon::S3::Lite;
+    require Amazon::Credentials;
+
+    my $localstack = $self->get_localstack;
+
+    $s3 = Amazon::S3::Lite->new(
+      { secure      => $localstack ? $FALSE : $TRUE,
+        credentials => Amazon::Credentials->new,
+        region      => $self->get_region,
+        $localstack ? ( host => 'localhost:4566' ) : (),
+      }
+    );
+
+    return $s3;
+  }
+}
 
 ########################################################################
 sub cmd_s3_list_buckets {
 ########################################################################
   my ($self) = @_;
 
-  require Amazon::S3::Lite;
-  require Amazon::Credentials;
-  my $localstack = $self->get_localstack;
-
-  my $s3 = Amazon::S3::Lite->new(
-    { secure      => $localstack ? $FALSE : $TRUE,
-      credentials => Amazon::Credentials->new,
-      region      => $ENV{AWS_REGION} // $ENV{AWS_DEFAULT_REGION} // $DEFAULT_REGION,
-      $localstack ? ( host => 'localhost:4566' ) : (),
-    }
-  );
+  my $s3 = $self->_s3;
 
   my $bucket_list = eval { return $s3->list_buckets; };
 
@@ -48,41 +64,15 @@ sub cmd_s3_create_bucket {
 ########################################################################
   my ($self) = @_;
 
-  require Amazon::S3::Lite;
-  require Amazon::Credentials;
-
-  my $s3 = Amazon::S3::Lite->new(
-    {
-      # secure      => 0,
-      # host        => 'localhost:4566',
-      credentials => Amazon::Credentials->new,
-      region      => 'us-east-1'
-    }
-  );
+  my $s3 = $self->_s3;
 
   my ($bucket_name) = $self->get_args;
 
-  print {*STDERR} Dumper( [ $s3->create_bucket($bucket_name) ] );
+  my $rsp = $s3->create_bucket($bucket_name);
+
+  $self->get_logger->debug( Dumper( [ rsp => $rsp ] ) );
 
   return $SUCCESS;
-}
-
-########################################################################
-sub _init_s3 {
-########################################################################
-  require Amazon::S3::Lite;
-  require Amazon::Credentials;
-
-  my $s3 = Amazon::S3::Lite->new(
-    {
-      # secure      => 0,
-      # host        => 'localhost:4566',
-      credentials => Amazon::Credentials->new,
-      region      => 'us-east-1'
-    }
-  );
-
-  return $s3;
 }
 
 ########################################################################
@@ -90,7 +80,7 @@ sub cmd_s3_get_bucket_notification_configuration {
 ########################################################################
   my ($self) = @_;
 
-  my $s3 = $self->_init_s3;
+  my $s3 = $self->_s3;
 
   my ($bucket_name) = $self->get_args;
 
@@ -112,17 +102,28 @@ sub cmd_s3_put_bucket_notification_configuration {
 ########################################################################
   my ($self) = @_;
 
-  my $s3 = $self->_init_s3;
+  my $s3 = $self->_s3;
 
-  my ( $bucket_name, $function_name, @args ) = $self->get_args;
+  my ( $bucket_name, @args ) = $self->get_args;
 
   my %options = $self->_parse_notification_args(@args);
 
-  my $lambda_function = $self->_lambda_get_function($function_name);
+  die "usage: put-bucket-notification bucket-name sqs:name|lambda:name event:event name:name value:value\n"
+    if !$options{lambda} && !$options{sqs};
 
-  $options{lambda_arn} = $lambda_function->{Configuration}{FunctionArn};
+  my $type;
 
-  my $rsp = eval { $s3->put_bucket_notification_configuration( $bucket_name, %options ); };
+  if ( my $name = $options{lambda} ) {
+    my $lambda_function = $self->_lambda_get_function($name);
+    $options{lambda_arn} = $lambda_function->{Configuration}{FunctionArn};
+    $type = 'lambda';
+  }
+  else {
+    $options{queue_arn} = sprintf 'arn:aws:sqs:%s:%s:%s', $s3->region, $self->_sts_get_account, $options{sqs};
+    $type = 'sqs';
+  }
+
+  my $rsp = eval { $s3->put_bucket_notification_configuration( $bucket_name, %options, type => $type ); };
 
   if ( !$rsp && $EVAL_ERROR ) {
     print {*STDERR} $EVAL_ERROR;
@@ -152,21 +153,19 @@ sub _parse_notification_args {
 
     if ( $type eq 'event' ) {
       push @{ $options{events} }, $body;
-      next;
     }
-
-    if ( $type eq 'name' || $type eq 'value' ) {
-      my ($name)  = $body =~ /name:([^,]+)/xsm;
-      my ($value) = $body =~ /value:([^,]+)/xsm;
+    elsif ( $type eq 'name' || $type eq 'value' ) {
+      my ($name)  = $token =~ /name:([^,]+)/xsm;
+      my ($value) = $token =~ /value:([^,]+)/xsm;
 
       die "ERROR: must be name/value pair\n"
         if !defined $name || !length $name || !defined $value || !length $value;
 
       $options{filters}{$name} = $value;
-      next;
     }
-
-    die "ERROR: invalid arguments\n";
+    else {
+      $options{$type} = $body;
+    }
   }
 
   return %options;

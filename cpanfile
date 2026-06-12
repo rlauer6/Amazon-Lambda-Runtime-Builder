@@ -17,3 +17,4 @@ requires "JSON", "4.10";
 requires "Readonly", "2.05";
 requires "Role::Tiny", "2.002004";
 requires "Role::Tiny::With", "2.002004";
+requires "URI::Escape", "5.34";

@@ -4,12 +4,83 @@ use strict;
 use warnings;
 
 use CLI::Simple::Constants qw(:booleans);
-use CLI::Simple::Utils qw(slurp slurp_json);
+use CLI::Simple::Utils qw(choose slurp slurp_json);
 use Data::Dumper;
 use English qw(-no_match_vars);
 use JSON;
 
 use Role::Tiny;
+
+{
+  my $iam;
+
+########################################################################
+  sub _iam {
+########################################################################
+    my ($self) = @_;
+
+    return $iam
+      if $iam;
+
+    require Amazon::API::IAM;
+
+    $iam = Amazon::API::IAM->new( log_level => $self->get_log_level );
+
+    return $iam;
+  }
+}
+
+########################################################################
+sub _detach_role_policy {
+########################################################################
+  my ( $self, %args ) = @_;
+
+  my $iam = $self->_iam;
+
+  my $req = {
+    RoleName  => $args{role_name},
+    PolicyArn => $args{policy_arn},
+  };
+
+  return $iam->DetachRolePolicy($req);
+}
+
+########################################################################
+sub _policy_arn {
+########################################################################
+  my ( $self, $policy_name_or_arn ) = @_;
+
+  return $policy_name_or_arn
+    if $policy_name_or_arn =~ /^arn:/xsm;
+
+  my $iam = $self->_iam;
+
+  my @prefixes = ( "arn:aws:iam::aws:policy/service-role/$policy_name_or_arn", "arn:aws:iam::aws:policy/$policy_name_or_arn", );
+
+  for my $arn (@prefixes) {
+    my $result = eval { $iam->GetPolicy( { PolicyArn => $arn } ) };
+    return $arn if $result && !$EVAL_ERROR;
+  }
+
+  return;
+}
+
+########################################################################
+sub cmd_iam_detach_role_policy {
+########################################################################
+  my ($self) = @_;
+
+  my ( $role_name, $policy_name_or_arn ) = $self->get_args;
+
+  my $policy_arn = $self->_policy_arn($policy_name_or_arn);
+
+  die "ERROR: could not find ARN for $policy_name_or_arn\n"
+    if !$policy_arn;
+
+  my $rsp = eval { $self->_detach_role_policy( role_name => $role_name, policy_arn => $policy_arn ); };
+
+  return $self->_handle_response($rsp);
+}
 
 ########################################################################
 sub cmd_create_assume_policy {
@@ -52,16 +123,13 @@ sub cmd_iam_create_role {
 
   $document = encode_json($document);
 
-  require Amazon::API::IAM;
+  my $iam = $self->_iam;
 
-  my $iam = Amazon::API::IAM->new;
+  my $rsp = eval { $iam->CreateRole( { RoleName => $role_name, AssumeRolePolicyDocument => $document } ); };
 
-  my $rsp = $iam->CreateRole( { RoleName => $role_name, AssumeRolePolicyDocument => $document } );
-
-  print {*STDOUT} JSON->new->pretty->encode($rsp);
-
-  return $SUCCESS;
+  return $self->_handle_response($rsp);
 }
+
 ########################################################################
 sub cmd_iam_attach_role_policy {
 ########################################################################
@@ -72,18 +140,26 @@ sub cmd_iam_attach_role_policy {
   die "ERROR: no such file: $policy_file\n"
     if !-e $policy_file;
 
-  require Amazon::API::IAM;
-  my $iam = Amazon::API::IAM->new;
+  my $iam = $self->_iam;
 
   my $policies = slurp($policy_file);
 
-  foreach my $policy ( grep { /\S/xsm && !/^\s*[#]/xsm } split /\n/xsm, $policies ) {
-    $iam->AttachRolePolicy( { RoleName => $role_name, PolicyArn => $policy } );
+  eval {
+    foreach my $policy ( grep { /\S/xsm && !/^\s*[#]/xsm } split /\n/xsm, $policies ) {
+      $iam->AttachRolePolicy(
+        { RoleName  => $role_name,
+          PolicyArn => $policy
+        }
+      );
+    }
+  };
+
+  if ($EVAL_ERROR) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
   }
 
-  print {*STDOUT} $policies;
-
-  return $SUCCESS;
+  return $self->cmd_iam_list_attached_policies;
 }
 
 ########################################################################
@@ -91,9 +167,8 @@ sub _iam_get_role {
 ########################################################################
   my ( $self, $role_name ) = @_;
 
-  require Amazon::API::IAM;
+  my $iam = $self->_iam;
 
-  my $iam = Amazon::API::IAM->new;
   return $iam->GetRole( { RoleName => $role_name } );
 }
 
@@ -107,9 +182,39 @@ sub cmd_iam_get_role {
   die "ERROR: usage: get-role role-name\n"
     if !$role_name;
 
-  print {*STDOUT} JSON->new->pretty->encode( $self->_iam_get_role($role_name) );
+  my $rsp = eval { $self->_iam_get_role($role_name); };
+
+  if ($rsp) {
+    # IAM returns AssumeRolePolicyDocument URL-encoded — decode it
+    if ( my $doc = $rsp->{Role}{AssumeRolePolicyDocument} ) {
+      require URI::Escape;
+      $rsp->{Role}{AssumeRolePolicyDocument} = decode_json( URI::Escape::uri_unescape($doc) );
+    }
+
+    print {*STDOUT} JSON->new->pretty->encode($rsp);
+
+    return $SUCCESS;
+  }
+
+  if ($EVAL_ERROR) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
 
   return $SUCCESS;
+}
+
+########################################################################
+sub cmd_iam_list_attached_policies {
+########################################################################
+  my ($self) = @_;
+
+  my ($role_name) = $self->get_args;
+
+  my $iam = $self->_iam;
+  my $rsp = eval { $iam->ListAttachedRolePolicies( { RoleName => $role_name } ); };
+
+  return $self->_handle_response($rsp);
 }
 
 1;

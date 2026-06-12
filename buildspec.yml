@@ -17,10 +17,11 @@ extra-files:
   - ChangeLog
   - share:
       - README.md
+      - profiles.yml
       - share/Dockerfile
       - share/MANIFEST.json
       - share/LambdaHandler.pm
-      - share/Makefile.build
+      - share/Makefile
       - share/ecr-create-repo.mk
       - share/ecr-login.mk
       - share/eventbridge.mk

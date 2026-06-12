@@ -1,3 +1,186 @@
+Fri Jun 12 09:17:31 2026  Rob Lauer  <rclauer@gmail.com>
+
+
+	[1.0.1]:
+	* VERSION: bump
+	* release-notes.md: new
+	* release-notes/release-notes-1.0.1.md: new
+	* buildspec.yml
+	- share/Makefile.build => Makefile
+	* cpanfile: +URI::Escape
+	* release-notes.md: new
+	* release-notes/release-notes-1.0.1.md: new
+	* share/Makefile: renamed
+	* .gitignore
+	- fix bin/ files
+	* lib/Amazon/Lambda/Runtime/Builder/Helper.pm.in
+	- + Amazon::Lambda::Runtime::Builder::Role::Logs
+	(_parse_params): new
+	(_handle_response): new
+	(init)
+	- initialize region
+	(main)
+	- add new helpers
+	- abbreviations
+	- event_bridge => eventbridge
+	(cmd_create_cpanfile): cpanfile or --output
+	(check_response): refactored to use handle_response
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Events.pm.in
+	- event_bridge => eventbridge
+	(_events): new
+	(cmd_eventbridge_describ_rule): use _events
+	(cmd_eventbridge_put_lambda_target)
+	- use _ec
+	- use function name argument
+	(_eventbridge_put_rule): use _events
+	(cmd_eventbridget_disable_rule): likewise
+	* lib/Amazon/Lambda/Runtime/Builder/Role/IAM.pm.in
+	(_iam): new
+	(_detach_policy): new
+	(cmd_iam_create_role)
+	- use _iam
+	- refactored
+	(cmd_iam_attch_role_policy)
+	- use _iam
+	- call cmd_iam_list_attached_policies after attaching policies
+	(_iam_get_role)
+	- use _iam
+	(cmd_iam_get_role)
+	- decode AssumeRolePolicyDocument
+	(cmd_iam_list_attached_policies): new
+	* lib/Amazon/Lambda/Runtime/Builder/Role/ECR.pm.in
+	(_ecr): new
+	(cmd_ecr_create_repository): use _ecr
+	(cmd_ecr_get_lifecyle_policy): likewise
+	(cmd_ecr_describe_images): likewise
+	(cmd_ecr_get_login_password): likewise
+	(cmd_ecr_describe_respositories)
+	- likewise
+	- pass repo name as array
+	(cmd_ecr_put_lifecycle_policy)
+	- use _ecr
+	- add count and count unit as args
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Lambda.pm.in
+	(cmd_lambda_put_function_concurrency): new
+	(_lambda): new
+	(cmd_lambda_update_function_configuration): new
+	(cmd_lambda_invoke_function): use _lambda
+	(cmd_lambda_create_function)
+	- use Arn from role payload
+	- use _lambda
+	- refactored
+	(cmd_lambda_get_function_configuration): new
+	(_lambda_get_function): use _lambda
+	(_lambda_get_policy): use _lambda
+	(_resolve_arn): new
+	(cmd_lambda_list_event_source_mapping)
+	- use _lambda
+	- use _resolve_arn to resolve arn from event source name
+	- filter by uuid
+	(cmd_lambda_create_event_source_mappings)
+	- use _lambda
+	- use _resolve_arn
+	- refactored
+	(cmd_lambda_put_function_concurrency): new
+	(cmd_lambda_get_function_concurrency): new
+	(cmd_lambda_delete_function): new
+	(cmd_lambda_delete_event_source_mapping): new
+	(cmd_lambda_update_event_source_mapping): new
+	(cmd_lambda_add_permission)
+	- use _lambda
+	- add SourceAccount to restrict to account
+	- refactored
+	(cmd_lambda_remove_permission): new
+	(cmd_lambda_create_function_url_config)
+	- use _lambda
+	- refactored
+	(cmd_lambda_get_function_url_config): likewise
+	(cmd_lambda_delete_function_url_config): likewise
+	* lib/Amazon/Lambda/Runtime/Builder/Role/S3.pm.in
+	(_s3): new
+	(cmd_s3_list_buckets)
+	- use _s3
+	- use get_region for region
+	(cmd_s3_create_bucket)
+	- likewise
+	- use _s3
+	- add debug level output
+	(init_s3): removed
+	(cmd_s3_get_bucket_notification_configuration)
+	- uaw _s3
+	(cmd_s3_put_bucket_notification_configuration)
+	- use _s3
+	- updated syntax => bucket args
+	- support lambda/sqs notification types
+	- refactored
+	(_parse_notification_args)
+	- fix regexp, test full token not body
+	* lib/Amazon/Lambda/Runtime/Builder/Role/STS.pm.in
+	(_sts): new
+	(_sts_get_account): use _sts
+	* lib/Amazon/Lambda/Runtime/Builder/Role/SQS.pm.in
+	(_sqs): new
+	(cmd_get_queue_policy): new
+	(cmd_sqs_create_queue)
+	- use _sqs
+	- support attributes as args
+	(_sqs_set_queue_attributes): new
+	(_sqs_get_queue_attributes): new
+	(cmd_sqs_get_queue_bucket_policy): new
+	(cmd_sqs_get_queue_attributes): new
+	(cmd_sqs_get_queue_arn): new
+	(cmd_sqs_set_queue_redrive_policy): new
+	* share/MANIFEST.json: Makefile.build => Makefile
+	* share/Dockerfile
+	- removed REINSTALL_PACKAGES
+	- removed Amazon::Lambda::Runtime
+	* share/Makefile
+	- renamed from Makefile.build
+	- include help.mk
+	- avoid duplicate help for ecr-repo
+	- +$(DIST_TARBALL) to dep list for image
+	- chmod 644 || true
+	(lambda-function)
+	- alr-helper returns blank if function not found
+	- -invoke from CLEANFFILE, +sentinels
+	(.PHONY)
+	- +lambda-eventbridge-trigger, ecr-uri, ecr-lifecycle-policy,
+	- +invoke, update-policies
+	(show-makefiles): new target
+	* share/ecr-create-repo.mk
+	- fix comments before dependencies
+	- +.PHONY targets ecr-uri, ecr-repo, ecr-lifecycle-policy
+	* share/ecr-login.mk
+	- get URI from cache
+	* share/eventbridge.mk
+	- fix comment before dependencies
+	- fix dependency list
+	- remove lambda-handler from arg list for put-lambda-target
+	* share/s3.mk
+	- fix comment before dependencies
+	- bucket list is under buckets key
+	- put-bucket-notification takes bucket name, not function name
+	* share/sns.mk: likewise
+	- fix comment before dependencies
+	* share/sqs.mk
+	- fix comment before dependencies
+	- likewise
+	(sqs-dlq): new
+	(lambda-concurrency): new
+	(sqs-queue-policy): new
+	(lambda-sqs-indexer): new
+	(sqs-queue-redrive): new
+	(lambda-sqs-permission): new
+	(lambda-sqs-trigger)
+	- use key:value syntax for list/create-event-source-mappings args
+	* share/streaming.mk: likewise
+	- fix to display help for .includes/ files
+	- remove placeholder
+	* share/help.mk
+	- fix to display help for .includes/ files
+	- +DLQ_NAME, BATCH_SIZE to variables
+	* profiles.yaml: new
+
 Wed May 20 07:22:40  Rob Lauer  rclauer@gmail.com
 
 	[1.0.0]: BigBang

@@ -7,16 +7,33 @@ use CLI::Simple::Constants qw(:booleans);
 use Data::Dumper;
 use English qw(-no_match_vars);
 use JSON;
+use List::Util qw(none);
 
 use Role::Tiny;
+
+{
+  my $sqs;
+
+  ########################################################################
+  sub _sqs {
+    ########################################################################
+    my ($self) = @_;
+
+    return $sqs
+      if $sqs;
+
+    require Amazon::API::SQS;
+
+    return Amazon::API::SQS->new( log_level => $self->get_log_level );
+  }
+}
 
 ########################################################################
 sub cmd_sqs_list_queues {
 ########################################################################
   my ($self) = @_;
 
-  require Amazon::API::SQS;
-  my $sqs = Amazon::API::SQS->new;
+  my $sqs = $self->_sqs;
 
   my $rsp = eval { $sqs->ListQueues(); };
 
@@ -24,18 +41,228 @@ sub cmd_sqs_list_queues {
 }
 
 ########################################################################
-sub cmd_sqs_create_queue {
+sub cmd_sqs_get_queue_policy {
 ########################################################################
   my ($self) = @_;
 
   my ($queue_name) = $self->get_args;
 
-  require Amazon::API::SQS;
-  my $sqs = Amazon::API::SQS->new;
+  my $sqs = $self->_sqs;
 
-  my $rsp = eval { $sqs->CreateQueue( { QueueName => $queue_name } ); };
+  my $rsp = eval { return $self->_sqs_get_queue_policy($queue_name); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_sqs_create_queue {
+########################################################################
+  my ($self) = @_;
+
+  my ( $queue_name, @args ) = $self->get_args;
+
+  my $sqs = $self->_sqs;
+
+  my $redrive_policy = {};
+
+  my %params;
+
+  foreach my $p (@args) {
+    my ($key) = split /[:=]/xsmi, $p, 2;
+    die "ERROR: invalid argument $p\n"
+      if none { $key eq $_ } qw(timeout retention receive_count dlq);
+
+    if ( $p =~ /\A([^=]+)[=:](.*)\z/xsmi ) {
+      $params{$1} = $2;
+    }
+    else {
+      die "ERROR: invalid parameter $p\n";
+    }
+  }
+
+  if ( $params{dlq} ) {
+    $redrive_policy->{deadLetterTargetArn} = sprintf 'arn:aws:sqs:%s:%s:%s', $sqs->get_region,
+      $self->_sts_get_account, $params{dlq};
+    $redrive_policy->{maxReceiveCount} = $params{receive_count} // 3;
+  }
+  elsif ( $params{receive_count} ) {
+    die "ERROR: receive_count without dlq\n";
+  }
+
+  my $args = {
+    QueueName  => $queue_name,
+    Attributes => {
+      $params{timeout}   ? ( VisibilityTimeout      => $params{timeout} )             : (),
+      $params{retention} ? ( MessageRetentionPeriod => $params{retention} )           : (),
+      %{$redrive_policy} ? ( RedrivePolicy          => encode_json($redrive_policy) ) : (),
+    }
+  };
+
+  $self->get_logger->debug( Dumper( [ args => $args ] ) );
+
+  return $SUCCESS
+    if $self->get_dryrun;
+
+  my $rsp = eval { $sqs->CreateQueue($args); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub _sqs_set_queue_attributes {
+########################################################################
+  my ( $self, %args ) = @_;
+
+  my ( $attributes, $queue_name ) = @args{qw(attributes queue_name)};
+
+  my $sqs = $self->_sqs;
+
+  my $region    = $sqs->get_region;
+  my $account   = $self->_sts_get_account;
+  my $queue_url = sprintf 'https://sqs.%s.amazonaws.com/%s/%s', $region, $account, $queue_name;
+
+  return eval { return $sqs->SetQueueAttributes( { QueueUrl => $queue_url, Attributes => $attributes, } ); };
+}
+
+########################################################################
+sub cmd_sqs_set_queue_bucket_policy {
+########################################################################
+  my ($self) = @_;
+
+  my ( $queue_name, $bucket_name ) = $self->get_args;
+
+  my $sqs = $self->_sqs;
+
+  my $region  = $sqs->get_region;
+  my $account = $self->_sts_get_account;
+
+  my $queue_arn = sprintf 'arn:aws:sqs:%s:%s:%s', $region, $account, $queue_name;
+
+  my $policy = {
+    Version   => '2012-10-17',
+    Statement => [
+      { Sid       => 'AllowS3SendMessage',
+        Effect    => 'Allow',
+        Principal => { Service => 's3.amazonaws.com', },
+        Action    => 'sqs:SendMessage',
+        Resource  => $queue_arn,
+        Condition => { ArnLike => { 'aws:SourceArn' => 'arn:aws:s3:::' . $bucket_name }, }
+      }
+    ]
+  };
+
+  return
+    eval { $self->_sqs_set_queue_attributes( attributes => { Policy => encode_json($policy) }, queue_name => $queue_name, ); };
+}
+
+########################################################################
+sub cmd_sqs_set_queue_redrive_policy {
+########################################################################
+  my ($self) = @_;
+
+  my ( $queue_name, $dlq_name, $receive_count ) = $self->get_args;
+
+  my $sqs = $self->_sqs;
+
+  my $region  = $sqs->get_region;
+  my $account = $self->_sts_get_account;
+
+  my $rsp = eval { $self->_sqs_get_queue_attributes( $dlq_name, 'QueueArn' ); };
+
+  if ( !$rsp ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  my $dlq_arn = $rsp->{Attributes}{QueueArn};
+
+  my $policy = {
+    deadLetterTargetArn => $dlq_arn,
+    maxReceiveCount     => $receive_count,
+  };
+
+  return eval {
+    $self->_sqs_set_queue_attributes(
+      attributes => { RedrivePolicy => encode_json($policy) },
+      queue_name => $queue_name,
+    );
+  };
+}
+
+########################################################################
+sub cmd_sqs_get_queue_attributes {
+########################################################################
+  my ( $self, $queue_name, @attribute_names ) = @_;
+
+  if ( !$queue_name ) {
+    ( $queue_name, @attribute_names ) = $self->get_args;
+  }
+
+  my $rsp = $self->_sqs_get_queue_attributes( $queue_name, @attribute_names );
 
   return $self->_check_response($rsp);
+}
+
+########################################################################
+sub _sqs_get_queue_attributes {
+########################################################################
+  my ( $self, $queue_name, @attribute_names ) = @_;
+
+  my $sqs     = $self->_sqs;
+  my $region  = $sqs->get_region;
+  my $account = $self->_sts_get_account;
+
+  if ( !@attribute_names ) {
+    @attribute_names = 'All';
+  }
+
+  my $queue_url = sprintf 'https://sqs.%s.amazonaws.com/%s/%s', $region, $account, $queue_name;
+
+  my $args = {
+    QueueUrl       => $queue_url,
+    AttributeNames => [@attribute_names],
+  };
+
+  return eval { $sqs->GetQueueAttributes($args); };
+}
+
+########################################################################
+sub _sqs_get_queue_arn {
+########################################################################
+  my ( $self, $queue_name ) = @_;
+
+  my $rsp = $self->_sqs_get_queue_attributes( $queue_name, 'QueueArn' );
+
+  return $rsp->{Attributes}{QueueArn};
+}
+
+########################################################################
+sub _sqs_get_queue_policy {
+########################################################################
+  my ( $self, $queue_name ) = @_;
+
+  my $rsp = $self->_sqs_get_queue_attributes( $queue_name, 'Policy' );
+
+  return $rsp->{Attributes}{Policy};
+}
+
+########################################################################
+sub cmd_sqs_get_queue_arn {
+########################################################################
+  my ($self) = @_;
+
+  my ($queue_name) = $self->get_args;
+
+  my $arn = eval { $self->_sqs_get_queue_arn($queue_name); };
+
+  if ( !$arn && $EVAL_ERROR ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  print {*STDOUT} $arn;
+
+  return $SUCCESS;
 }
 
 1;

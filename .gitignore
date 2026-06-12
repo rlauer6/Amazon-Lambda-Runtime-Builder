@@ -19,6 +19,5 @@ resources
 *-review-2*.annotate
 **/*.crit
 **/*.tdy
-bin//home/rlauer/git/Amazon-Lambda-Runtime-Builder/builder
-bin//home/rlauer/git/Amazon-Lambda-Runtime-Builder/bin/alr-helper
-bin//home/rlauer/git/Amazon-Lambda-Runtime-Builder/bin/alr-builder
+bin/alr-helper
+bin/alr-builder

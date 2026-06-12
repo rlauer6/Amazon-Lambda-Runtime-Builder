@@ -1,0 +1,58 @@
+package Amazon::Lambda::Runtime::Builder::Role::Logs;
+
+use strict;
+use warnings;
+
+use CLI::Simple::Constants qw(:booleans);
+use Data::Dumper;
+use English qw(-no_match_vars);
+use Role::Tiny;
+
+{
+  my $logs;
+
+########################################################################
+  sub _logs {
+########################################################################
+    my ($self) = @_;
+
+    return $logs
+      if $logs;
+
+    require Amazon::API::CloudWatchLogs;
+
+    $logs = Amazon::API::CloudWatchLogs->new( log_level => $self->get_log_level );
+
+    return $logs;
+  }
+}
+
+########################################################################
+sub cmd_logs_describe_log_streams {
+########################################################################
+  my ($self) = @_;
+
+  my ( $log_group, $limit ) = $self->get_args;
+
+  my $logs = $self->_logs;
+
+  my $req = {
+    logGroupName => $log_group,
+    orderBy      => 'LastEventTime',
+    descending   => 1,
+    limit        => $limit // 1,
+  };
+
+  my $rsp = eval { $logs->DescribeLogStreams($req); };
+
+  if ( !$rsp && $EVAL_ERROR ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  print {*STDOUT} JSON->new->pretty->encode($rsp);
+
+  return $SUCCESS;
+}
+
+1;

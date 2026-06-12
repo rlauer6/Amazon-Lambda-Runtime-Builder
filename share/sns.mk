@@ -7,5 +7,5 @@
 #
 ########################################################################
 
-$(CACHE_DIR)/sns: ## invoke Lambda with SNS test payload $(CACHE_DIR)/lambda-function $(PAYLOAD) | $(CACHE_DIR)
+$(CACHE_DIR)/sns: $(CACHE_DIR)/lambda-function $(PAYLOAD) | $(CACHE_DIR) ## invoke Lambda with SNS test payload
 	$(NO_ECHO)alr-helper invoke-function $(FUNCTION_NAME) $(PAYLOAD) | tee $@

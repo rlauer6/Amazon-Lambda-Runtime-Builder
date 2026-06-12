@@ -7,6 +7,8 @@ VERSION := $(shell test -e ../VERSION && cat ../VERSION)
 
 -include project.mk
 
+include .includes/help.mk
+
 AWS_PROFILE   ?= default
 REGION        ?= us-east-1
 REPO_NAME     ?= perl-lambda
@@ -55,7 +57,7 @@ endif
 lambda-policies:            $(CACHE_DIR)/lambda-policies ## attach IAM policies to execution role
 lambda-function:            $(CACHE_DIR)/lambda-function ## create Lambda function (builds image if needed)
 lambda-role:                $(CACHE_DIR)/lambda-role ## create IAM execution role
-ecr-repo:                   $(CACHE_DIR)/ecr-repo ## create ECR repository and lifecycle policy
+ecr-repo:                   $(CACHE_DIR)/ecr-repo 
 deploy:                     $(CACHE_DIR)/deploy ## push image to ECR and tag as latest
 image:                      $(CACHE_DIR)/image ## build Docker image from distribution tarball
 update-function:            $(CACHE_DIR)/update-function ## update Lambda function code to latest image
@@ -102,6 +104,7 @@ $(CACHE_DIR)/tarball-validated: $(DIST_TARBALL) | $(CACHE_DIR)
 $(CACHE_DIR)/image: \
     $(BUILDER_HOME)/docker/Dockerfile \
     $(BUILDER_HOME)/docker/cpanfile \
+    $(DIST_TARBALL) \
     $(BUILDER_HOME)/docker/debian-packages \
     $(CACHE_DIR)/tarball-validated | $(CACHE_DIR)
 	$(NO_ECHO)test -e $@ && chmod -f 644 $@; \
@@ -128,7 +131,7 @@ include .includes/ecr-login.mk
 # push image to ECR repository
 ########################################################################
 $(CACHE_DIR)/deploy: $(CACHE_DIR)/ecr-repo $(CACHE_DIR)/image | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	$(call ecr_login,$(shell cat $(CACHE_DIR)/ecr-repo))
 	$(NO_ECHO)URI=$$(cat $(CACHE_DIR)/ecr-repo); \
 	docker tag $(REPO_NAME):latest $$URI:latest; \
@@ -159,7 +162,7 @@ $(CACHE_DIR)/policy-document: | $(CACHE_DIR)
 	$(NO_ECHO)alr-helper create-assume-policy lambda.amazonaws.com > $@ && chmod 444 $@
 
 $(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null; \
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	if alr-helper get-role $(ROLE_NAME) > $@ 2>/dev/null; then \
 	    echo "role $(ROLE_NAME) already exists"; \
 	    chmod 444 $@; \
@@ -170,7 +173,7 @@ $(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
 POLICIES_FILE ?= policies
 
 $(CACHE_DIR)/lambda-policies: $(CACHE_DIR)/lambda-role $(POLICIES_FILE) | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null; \
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	policies=$$(mktemp); trap 'rm -f $$policies' EXIT; \
 	alr-helper attach-policy $(ROLE_NAME) $(POLICIES_FILE) > $$policies && cp $$policies $@ && chmod 444 $@
 
@@ -183,22 +186,22 @@ update-policies: $(POLICIES_FILE) ## re-attach IAM policies from policies file
 ########################################################################
 $(CACHE_DIR)/lambda-function: $(CACHE_DIR)/ecr-repo $(CACHE_DIR)/lambda-policies | $(CACHE_DIR)/deploy
 	$(NO_ECHO)function="$$(alr-helper get-function $(FUNCTION_NAME))"; \
-	if echo "$$function" | grep -qi 'function not found'; then \
+	if [[ "$$function" = "" }]]; then \
 	    URI=$$(cat $(CACHE_DIR)/ecr-repo); \
 	    function="$$(alr-helper create-function $(FUNCTION_NAME) $(ROLE_NAME) $$URI)"; \
-	elif echo "$$function" | grep -q 'errorCode\|error\|Error'; then \
+	elif ! echo "$$function" | grep -q '"FunctionName"'; then \
 	    echo "ERROR: get-function failed: $$function" >&2; \
 	    exit 1; \
 	fi; \
 	test -e $@ || { echo "$$function" > $@ && chmod 444 $@; }
 
 $(CACHE_DIR)/image-digest: $(CACHE_DIR)/deploy | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null; \
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	alr-helper describe-images $(REPO_NAME) | \
 	  perl -MJSON -0ne 'print decode_json($$_)->{imageDigest}' > $@ && chmod 444 $@
 
 $(CACHE_DIR)/update-function: $(CACHE_DIR)/image-digest | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null; \
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	DIGEST=$$(cat $<); \
 	URI=$$(cat $(CACHE_DIR)/ecr-repo); \
         alr-helper update-function $(FUNCTION_NAME) $$URI $$DIGEST; \
@@ -268,23 +271,38 @@ CLEANFILES = \
     $(CACHE_DIR)/sqs-queue \
     $(CACHE_DIR)/s3-bucket \
     $(CACHE_DIR)/update-function \
-    invoke \
+    $(CACHE_DIR)/sqs-dlq \
+    $(CACHE_DIR)/sqs-queue-policy \
+    $(CACHE_DIR)/sqs-queue-redrive \
+    $(CACHE_DIR)/lambda-sqs-permission \
+    $(CACHE_DIR)/lambda-s3-sqs-trigger \
+    $(CACHE_DIR)/lambda-concurrency \
     $(BUILDER_HOME)/docker/cpanfile \
     $(BUILDER_HOME)/docker/debian-packages \
 
 clean: ## remove all generated sentinels and docker artifacts
-	$(NO_ECHO)chmod -f 644 $(CLEANFILES) 2>/dev/null; \
+	$(NO_ECHO)for a in $(CLEANFILES); do \
+	  chmod 644 $$a 2>/dev/null || true; \
+	done; \
 	rm -f $(CLEANFILES)
 
 .PHONY: \
     lambda-policies \
     lambda-function \
+    lambda-eventbridge-trigger \
     lambda-role \
     ecr-repo \
+    ecr-uri \
+    ecr-lifecycle-policy \
     deploy \
     image \
+    invoke \
     update-function \
+    update-policies \
     lambda-s3-trigger \
     lambda-sqs-trigger \
     sns
 
+.PHONY: show-makefiles
+show-makefiles:
+	echo $(MAKEFILE_LIST)

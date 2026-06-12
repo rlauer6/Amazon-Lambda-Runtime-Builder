@@ -7,7 +7,6 @@ FROM debian:trixie-slim AS builder
 
 ARG RESOLVER="--resolver 02packages,https://cpan.openbedrock.net/orepan2"
 ARG EXTRA_BUILD_PACKAGES=""
-ARG REINSTALL_PACKAGES="OrePAN2::S3"
 ARG DIST_TARBALL=""
 
 # Install build tools and runtime deps
@@ -35,9 +34,7 @@ COPY ${DIST_TARBALL} /usr/src/app/
 RUN cpm install -L /usr/src/app/local ${RESOLVER} ${DIST_TARBALL}
 
 ARG DARKPAN_REBUILD=0
-RUN cpm install --show-build-log-on-failure -L /usr/src/app/local \
-      ${RESOLVER} \
-      --reinstall ${REINSTALL_PACKAGES} Amazon::Lambda::Runtime@2.1.1
+RUN cpm install --show-build-log-on-failure -L /usr/src/app/local ${RESOLVER}
 
 ########################################################################
 FROM debian:trixie-slim

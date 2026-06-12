@@ -15,9 +15,13 @@ with 'Amazon::Lambda::Runtime::Builder::Role::ECR';
 with 'Amazon::Lambda::Runtime::Builder::Role::Events';
 with 'Amazon::Lambda::Runtime::Builder::Role::IAM';
 with 'Amazon::Lambda::Runtime::Builder::Role::Lambda';
+with 'Amazon::Lambda::Runtime::Builder::Role::Logs';
 with 'Amazon::Lambda::Runtime::Builder::Role::S3';
 with 'Amazon::Lambda::Runtime::Builder::Role::SQS';
 with 'Amazon::Lambda::Runtime::Builder::Role::STS';
+
+use Readonly;
+Readonly::Scalar our $DEFAULT_REGION => 'us-east-1';
 
 __PACKAGE__->use_log4perl( level => 'info' );
 
@@ -26,6 +30,56 @@ use parent qw(CLI::Simple);
 our $VERSION = '@PACKAGE_VERSION@';
 
 caller or __PACKAGE__->main();
+
+########################################################################
+sub _parse_params {
+########################################################################
+  my ( $self, @params ) = @_;
+
+  if ( $params[0] =~ /^file:\/\/(.*)[.]json$/xsm ) {
+    my $file = $1;
+
+    die "ERROR: file $file not found\n"
+      if !-e $file;
+
+    return slurp_json($file);
+  }
+
+  my %configuration;
+
+  foreach my $p (@params) {
+    my (@parts) = split /[:=]/xsm, $p;
+
+    my ( $k, $v ) = choose {
+      return @parts
+        if @parts == 2;
+
+      die "ERROR: invalid parameter\n"
+        if @parts > 3;
+
+      return ( $parts[0], { toPascalCase( $parts[1] ) => $parts[2] } );
+    };
+
+    $configuration{ toPascalCase($k) } = $v;
+  }
+
+  return \%configuration;
+}
+
+########################################################################
+sub _handle_response {
+########################################################################
+  my ( $self, $rsp ) = @_;
+
+  if ( !$rsp && $EVAL_ERROR ) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  print {*STDOUT} $rsp ? JSON->new->pretty->encode($rsp) : q{};
+
+  return $SUCCESS;
+}
 
 ########################################################################
 sub _fetch_meta {
@@ -88,33 +142,25 @@ sub cmd_create_cpanfile {
   die "ERROR: usage alr-helper create-cpanfile --tarball tarball\n"
     if !$tar;
 
-  open my $fh, '>', 'cpanfile'
-    or die "ERROR: could open cpanfile for writing\n:$OS_ERROR";
+  if ( my $output = $self->get_output ) {
 
-  $self->_create_cpanfile( $fh, $tar );
+    open my $fh, '>', $output
+      or die "ERROR: could open $output for writing\n:$OS_ERROR";
 
-  close $fh;
+    $self->_create_cpanfile( $fh, $tar );
+
+    close $fh;
+  }
+  else {
+    $self->_create_cpanfile( *STDOUT, $tar );
+  }
 
   return $SUCCESS;
 }
 
 ########################################################################
-sub _check_response {
+sub _check_response { goto &_handle_response; }
 ########################################################################
-  my ( $self, $rsp ) = @_;
-
-  if ( !$rsp ) {
-    print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
-  }
-
-  if ($rsp) {
-    print {*STDOUT} JSON->new->pretty->encode($rsp);
-  }
-
-  return $SUCCESS;
-
-}
 
 ########################################################################
 sub init {
@@ -134,6 +180,10 @@ sub init {
     $self->set_dist_name($dist_name);
   }
 
+  my $region = $self->get_region // $ENV{AWS_REGION} // $ENV{AWS_DEFAULT_REGION} // $DEFAULT_REGION;
+
+  $self->set_region($region);
+
   return $self;
 }
 
@@ -141,53 +191,72 @@ sub init {
 sub main {
 ########################################################################
   my %commands = (
-    'add-permission'               => \&cmd_lambda_add_permission,
-    'attach-policy'                => \&cmd_iam_attach_role_policy,
-    'check'                        => \&cmd_check,
-    'create-assume-policy'         => \&cmd_create_assume_policy,
-    'create-bucket'                => \&cmd_s3_create_bucket,
-    'create-cpanfile'              => \&cmd_create_cpanfile,
-    'create-event-source-mappings' => \&cmd_lambda_create_event_source_mappings,
-    'create-function'              => \&cmd_lambda_create_function,
-    'create-function-url-config'   => \&cmd_lambda_create_function_url_config,
-    'create-queue'                 => \&cmd_sqs_create_queue,
-    'create-repository'            => \&cmd_ecr_create_repository,
-    'create-role'                  => \&cmd_iam_create_role,
-    'delete-function-url-config'   => \&cmd_lambda_delete_function_url_config,
-    'delete-rule'                  => \&cmd_event_bridge_delete_rule,
-    'describe-images'              => \&cmd_ecr_describe_images,
-    'describe-repositories'        => \&cmd_ecr_describe_repositories,
-    'describe-rule'                => \&cmd_event_bridge_describe_rule,
-    'disable-rule'                 => \&cmd_event_bridge_disable_rule,
-    'enable-rule'                  => \&cmd_event_bridge_enable_rule,
-    'get-bucket-notification'      => \&cmd_s3_get_bucket_notification_configuration,
-    'put-bucket-notification'      => \&cmd_s3_put_bucket_notification_configuration,
-    'put-lambda-target'            => \&cmd_event_bridge_put_lambda_target,
-    'put-rule-expression'          => \&cmd_event_bridge_put_rule_expression,
-    'put-rule-pattern'             => \&cmd_event_bridge_put_rule_pattern,
-    'get-account'                  => \&cmd_sts_get_account,
-    'get-function'                 => \&cmd_lambda_get_function,
-    'get-function-url-config'      => \&cmd_lambda_get_function_url_config,
-    'get-login-password'           => \&cmd_ecr_get_login_password,
-    'get-role'                     => \&cmd_iam_get_role,
-    'get-lifecycle-policy'         => \&cmd_ecr_get_lifecycle_policy,
-    'get-lambda-policy'            => \&cmd_lambda_get_policy,
-    'invoke-function'              => \&cmd_lambda_invoke_function,
-    'list-buckets'                 => \&cmd_s3_list_buckets,
-    'list-event-source-mappings'   => \&cmd_lambda_list_event_source_mappings,
-    'list-queues'                  => \&cmd_sqs_list_queues,
-    'put-lifecycle-policy'         => \&cmd_ecr_put_lifecycle_policy,
-    'remove-targets'               => \&cmd_event_bridge_remove_targets,
-    'update-function'              => \&cmd_lambda_update_function_code,
+    'add-permission'                => \&cmd_lambda_add_permission,
+    'attach-policy'                 => \&cmd_iam_attach_role_policy,
+    'check'                         => \&cmd_check,
+    'create-assume-policy'          => \&cmd_create_assume_policy,
+    'create-bucket'                 => \&cmd_s3_create_bucket,
+    'create-cpanfile'               => \&cmd_create_cpanfile,
+    'create-event-source-mappings'  => \&cmd_lambda_create_event_source_mappings,
+    'create-function'               => \&cmd_lambda_create_function,
+    'create-function-url-config'    => \&cmd_lambda_create_function_url_config,
+    'create-queue'                  => \&cmd_sqs_create_queue,
+    'create-repository'             => \&cmd_ecr_create_repository,
+    'create-role'                   => \&cmd_iam_create_role,
+    'delete-event-source-mappings'  => \&cmd_lambda_delete_event_source_mappings,
+    'delete-function'               => \&cmd_lambda_delete_function,
+    'delete-function-url-config'    => \&cmd_lambda_delete_function_url_config,
+    'delete-rule'                   => \&cmd_eventbridge_delete_rule,
+    'describe-images'               => \&cmd_ecr_describe_images,
+    'describe-log-streams'          => \&cmd_logs_describe_log_streams,
+    'describe-repositories'         => \&cmd_ecr_describe_repositories,
+    'describe-rule'                 => \&cmd_eventbridge_describe_rule,
+    'detach-role-policy'            => \&cmd_iam_detach_role_policy,
+    'disable-rule'                  => \&cmd_eventbridge_disable_rule,
+    'enable-rule'                   => \&cmd_eventbridge_enable_rule,
+    'get-account'                   => \&cmd_sts_get_account,
+    'get-bucket-notification'       => \&cmd_s3_get_bucket_notification_configuration,
+    'get-function'                  => \&cmd_lambda_get_function,
+    'get-function-concurrency'      => \&cmd_lambda_get_function_concurrency,
+    'get-function-configuration'    => \&cmd_lambda_get_function_configuration,
+    'get-function-url-config'       => \&cmd_lambda_get_function_url_config,
+    'get-lambda-policy'             => \&cmd_lambda_get_policy,
+    'get-lifecycle-policy'          => \&cmd_ecr_get_lifecycle_policy,
+    'get-login-password'            => \&cmd_ecr_get_login_password,
+    'get-queue-arn'                 => \&cmd_sqs_get_queue_arn,
+    'get-queue-attributes'          => \&cmd_sqs_get_queue_attributes,
+    'get-queue-policy'              => \&cmd_sqs_get_queue_policy,
+    'get-role'                      => \&cmd_iam_get_role,
+    'invoke-function'               => \&cmd_lambda_invoke_function,
+    'list-attached-policies'        => \&cmd_iam_list_attached_policies,
+    'list-buckets'                  => \&cmd_s3_list_buckets,
+    'list-event-source-mappings'    => \&cmd_lambda_list_event_source_mappings,
+    'list-queues'                   => \&cmd_sqs_list_queues,
+    'put-bucket-notification'       => \&cmd_s3_put_bucket_notification_configuration,
+    'put-function-concurrency'      => \&cmd_lambda_put_function_concurrency,
+    'put-lambda-target'             => \&cmd_eventbridge_put_lambda_target,
+    'put-lifecycle-policy'          => \&cmd_ecr_put_lifecycle_policy,
+    'put-rule-expression'           => \&cmd_eventbridge_put_rule_expression,
+    'put-rule-pattern'              => \&cmd_eventbridge_put_rule_pattern,
+    'remove-targets'                => \&cmd_eventbridge_remove_targets,
+    'remove-permission'             => \&cmd_lambda_remove_permission,
+    'set-queue-bucket-policy'       => \&cmd_sqs_set_queue_bucket_policy,
+    'set-queue-redrive-policy'      => \&cmd_sqs_set_queue_redrive_policy,
+    'update-event-source-mapping'   => \&cmd_lambda_update_event_source_mapping,
+    'update-function'               => \&cmd_lambda_update_function_code,
+    'update-function-configuration' => \&cmd_lambda_update_function_configuration,
   );
 
   my @option_specs = qw(
+    dryrun|d
+    input|i=s
+    localstack|L
+    log-level|l=s
+    output|o=s
+    region|r=s
     tarball|t=s help|h
     timeout|T=i
     wait|w=i
-    localstack|L
-    log-leve|l=s
-    output|o=s
   );
 
   my $extra_options = [qw( tar dist_name )];
@@ -195,7 +264,8 @@ sub main {
   my $cli = __PACKAGE__->new(
     commands      => \%commands,
     option_specs  => \@option_specs,
-    extra_options => $extra_options
+    extra_options => $extra_options,
+    abbreviations => $TRUE,
   );
 
   return $cli->run;

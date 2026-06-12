@@ -1,0 +1,30 @@
+profiles:
+  basic:
+    description: CloudWatch logging only
+    policies:
+      - AWSLambdaBasicExecutionRole
+
+  s3-read:
+    description: Read S3 objects and log to CloudWatch
+    policies:
+      - AWSLambdaBasicExecutionRole
+      - AmazonS3ReadOnlyAccess
+
+  s3-sqs:
+    description: S3 bucket event via SQS trigger
+    policies:
+      - AWSLambdaBasicExecutionRole
+      - AWSLambdaSQSQueueExecutionRole
+      - AmazonS3FullAccess
+      - AmazonSQSFullAccess
+
+  s3:
+    description: Direct S3 trigger with read/write access
+    policies:
+      - AWSLambdaBasicExecutionRole
+      - AmazonS3FullAccess
+
+  eventbridge:
+    description: Scheduled or pattern-based EventBridge trigger
+    policies:
+      - AWSLambdaBasicExecutionRole

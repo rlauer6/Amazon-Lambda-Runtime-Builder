@@ -2,7 +2,7 @@
     "files": {
         "Dockerfile" : "docker/Dockerfile",
         "LambdaHandler.pm" : "LambdaHandler.pm",
-        "Makefile.build" : "Makefile",
+        "Makefile" : "Makefile",
         "ecr-create-repo.mk" : ".includes/ecr-create-repo.mk",
         "ecr-login.mk" : ".includes/ecr-login.mk",
         "eventbridge.mk" : ".includes/eventbridge.mk",

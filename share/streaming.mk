@@ -2,9 +2,8 @@
 
 INVOKE_MODE ?= RESPONSE_STREAM
 
-$(CACHE_DIR)/lambda-function-url: ## create Lambda function URL for streaming \
-    $(CACHE_DIR)/lambda-function-url-permission \
-    $(CACHE_DIR)/lambda-function-url-invoke-permission | $(CACHE_DIR)
+$(CACHE_DIR)/lambda-function-url:  $(CACHE_DIR)/lambda-function-url-permission \
+    $(CACHE_DIR)/lambda-function-url-invoke-permission | $(CACHE_DIR) ## create Lambda function URL for streaming \
 	$(NO_ECHO)url="$$(alr-helper get-function-url-config $(FUNCTION_NAME) 2>&1 || true)"; \
 	if echo "$$url" | grep -q 'ResourceNotFoundException'; then \
 	    url="$$(alr-helper create-function-url-config $(FUNCTION_NAME) $(INVOKE_MODE) | \
@@ -25,8 +24,7 @@ $(CACHE_DIR)/lambda-function-url-permission: $(CACHE_DIR)/lambda-function | $(CA
 	        $(FUNCTION_NAME) \
 	        allow-public-url \
 	        lambda:InvokeFunctionUrl \
-	        '*' \
-	        arn:aws:s3:::placeholder)"; \
+	        '*' )"; \
 	fi; \
 	test -e $@ || echo "$$permission" > $@
 
@@ -38,11 +36,10 @@ $(CACHE_DIR)/lambda-function-url-invoke-permission: $(CACHE_DIR)/lambda-function
 	        $(FUNCTION_NAME) \
 	        allow-public-url-invoke \
 	        lambda:InvokeFunction \
-	        '*' \
-	        arn:aws:s3:::placeholder)"; \
+	        '*' )"; \
 	fi; \
 	test -e $@ || echo "$$permission" > $@
 
 .PHONY: test-streaming
-test-streaming: ## invoke Lambda function URL with curl $(CACHE_DIR)/lambda-function-url
+test-streaming:  $(CACHE_DIR)/lambda-function-url ## invoke Lambda function URL with curl
 	$(NO_ECHO)curl -sN $$(cat $(CACHE_DIR)/lambda-function-url)

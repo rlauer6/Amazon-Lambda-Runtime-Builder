@@ -17,3 +17,4 @@ JSON 4.10
 Readonly 2.05
 Role::Tiny 2.002004
 Role::Tiny::With 2.002004
+URI::Escape 5.34

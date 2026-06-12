@@ -8,14 +8,31 @@ use Data::Dumper;
 use English qw(-no_match_vars);
 use Role::Tiny;
 
+{
+  my $sts;
+
+########################################################################
+  sub _sts {
+########################################################################
+    my ($self) = @_;
+
+    return $sts
+      if $sts;
+
+    require Amazon::API::STS;
+
+    $sts = Amazon::API::STS->new( log_level => $self->get_log_level );
+
+    return $sts;
+  }
+}
+
 ########################################################################
 sub _sts_get_account {
 ########################################################################
   my ($self) = @_;
 
-  require Amazon::API::STS;
-
-  return Amazon::API::STS->new->GetCallerIdentity->{Account};
+  return $self->_sts->GetCallerIdentity->{Account};
 }
 
 ########################################################################
