@@ -1,6 +1,7 @@
 package Amazon::Lambda::Runtime::Builder::Role::CheckDeps;
 
 use CLI::Simple::Constants qw(:booleans);
+use CLI::Simple::Utils qw(slurp_json);
 use English qw(-no_match_vars);
 use File::Which qw(which);
 

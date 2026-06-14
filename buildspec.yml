@@ -21,12 +21,14 @@ extra-files:
       - share/Dockerfile
       - share/MANIFEST.json
       - share/LambdaHandler.pm
-      - share/Makefile
+      - share/Makefile.mk
+      - share/Makefile.builder
       - share/ecr-create-repo.mk
       - share/ecr-login.mk
       - share/eventbridge.mk
       - share/payload-sns.json
       - share/policies
+      - share/help.mk
       - share/payload.json
       - share/s3.mk
       - share/sns.mk

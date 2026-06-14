@@ -3,9 +3,11 @@ SHELL := /bin/bash
 
 .SHELLFLAGS := -ec
 
--include project.mk
+-include lambda.env
 
-include .includes/help.mk
+FRAMEWORK_DIR ?= $(shell perl -MFile::ShareDir=dist_dir -e 'print dist_dir("Amazon-Lambda-Runtime-Builder")')
+
+include $(FRAMEWORK_DIR)/help.mk
 
 AWS_PROFILE   ?= default
 REGION        ?= us-east-1
@@ -16,11 +18,10 @@ AWS_ACCOUNT   ?= $(shell alr-helper get-account)
 NOCACHE       ?=
 PAYLOAD       ?= payload-sns.json
 TIMEOUT       ?= 30
-INCLUDES_DIR  := .includes
 BUILDER_HOME  ?= $(shell echo $$(pwd))
 CACHE_DIR     := $(BUILDER_HOME)/.cache
 NO_ECHO       ?= @
-DIST_TARBALL  ?= $(shell ls $(BUILDER_HOME)/../*.tar.gz 2>/dev/null | sort -V | tail -1)
+DIST_TARBALL  ?= $(shell ls $(BUILDER_HOME)/*.tar.gz 2>/dev/null | sort -V | tail -1)
 DIST_NAME     := $(shell tar --wildcards -xOf $(DIST_TARBALL) '*/META.json' 2>/dev/null | \
                    perl -MJSON -0ne 'print decode_json($$_)->{name}' 2>/dev/null)
 
@@ -36,11 +37,6 @@ EXTRA_RUNTIME_PACKAGES ?=
 # 02packages,https://cpan.openbedrock.net/orepan2)
 RESOLVER               ?=
 
-# Used to reinstall packages that may have already been installed by a
-# previous Docker layer. Typically a new version of a module (without
-# a version number change) has been pushed to a DarkPAN.
-REINSTALL_PACKAGES     ?=
-
 NEEDS_TARBALL := $(filter-out clean,$(MAKECMDGOALS))
 
 ifeq ($(HANDLER_CLASS),)
@@ -49,7 +45,7 @@ endif
 
 ifneq ($(NEEDS_TARBALL),)
 ifeq ($(DIST_TARBALL),)
-  $(error No tarball found in $(BUILDER_HOME)/../ - Layer 1 must produce a dist tarball first)
+  $(error No tarball found in $(BUILDER_HOME) - run 'make dist' first)
 endif
 endif
 
@@ -78,14 +74,14 @@ $(CACHE_DIR):
 ########################################################################
 # generate cpanfile from tarball META.json (runtime + configure prereqs)
 ########################################################################
-$(BUILDER_HOME)/docker/cpanfile: $(DIST_TARBALL) | $(CACHE_DIR)
-	$(NO_ECHO)alr-helper create-cpanfile --tarball $(DIST_TARBALL)  > $@
+$(CACHE_DIR)/cpanfile: $(DIST_TARBALL) | $(CACHE_DIR)
+	$(NO_ECHO)alr-helper create-cpanfile --tarball $(DIST_TARBALL) > $@
 
 ########################################################################
 # generate debian-packages from cpanfile via cpan-sysdeps
 # falls back to empty file if cpan-sysdeps is not available
 ########################################################################
-$(BUILDER_HOME)/docker/debian-packages: $(BUILDER_HOME)/docker/cpanfile
+$(CACHE_DIR)/debian-packages: $(CACHE_DIR)/cpanfile
 	$(NO_ECHO)if command -v cpan-sysdeps > /dev/null 2>&1; then \
 	    cpan-sysdeps find-deps --cpanfile $< > $@; \
 	else \
@@ -107,13 +103,15 @@ $(CACHE_DIR)/tarball-validated: $(DIST_TARBALL) | $(CACHE_DIR)
 # create Docker image
 ########################################################################
 $(CACHE_DIR)/image: \
-    $(BUILDER_HOME)/docker/Dockerfile \
-    $(BUILDER_HOME)/docker/cpanfile \
+    $(CACHE_DIR)/cpanfile \
     $(DIST_TARBALL) \
-    $(BUILDER_HOME)/docker/debian-packages \
+    $(CACHE_DIR)/debian-packages \
     $(CACHE_DIR)/tarball-validated | $(CACHE_DIR)
 	$(NO_ECHO)test -e $@ && chmod -f 644 $@; \
-	cp $(DIST_TARBALL) docker/; \
+	buildctx=$$(mktemp -d); trap 'rm -rf $$buildctx' EXIT; \
+	cp $(FRAMEWORK_DIR)/Dockerfile $$buildctx/; \
+	cp $(CACHE_DIR)/cpanfile $$buildctx/; \
+	cp $(DIST_TARBALL) $$buildctx/; \
 	if [[ -n "$(RESOLVER)" ]]; then \
 	  resolver="--build-arg RESOLVER=\"--resolver $(RESOLVER)\""; \
 	fi; \
@@ -122,15 +120,13 @@ $(CACHE_DIR)/image: \
 	  --build-arg HANDLER_CLASS=$(HANDLER_CLASS) \
 	  --build-arg EXTRA_BUILD_PACKAGES="$(EXTRA_BUILD_PACKAGES)" \
 	  --build-arg EXTRA_RUNTIME_PACKAGES="$(EXTRA_RUNTIME_PACKAGES)" \
-	  --build-arg REINSTALL_PACKAGES="$(REINSTALL_PACKAGES)" \
 	  $$resolver \
-	  -f $< -t $(REPO_NAME) docker && \
-	docker inspect $(REPO_NAME):latest > $@ && chmod 444 $@ || rm -f $@; \
-	rm -f docker/$$(basename $(DIST_TARBALL))
+	  -f $$buildctx/Dockerfile -t $(REPO_NAME) $$buildctx && \
+	docker inspect $(REPO_NAME):latest > $@ && chmod 444 $@ || rm -f $@
 
-include .includes/ecr-create-repo.mk
+include $(FRAMEWORK_DIR)/ecr-create-repo.mk
 
-include .includes/ecr-login.mk
+include $(FRAMEWORK_DIR)/ecr-login.mk
 
 ########################################################################
 # push image to ECR repository
@@ -225,13 +221,13 @@ invoke: ## invoke Lambda function with test payload $(CACHE_DIR)/lambda-function
 # SNS
 #   make sns
 ########################################################################
-include .includes/sns.mk
+include $(FRAMEWORK_DIR)/sns.mk
 
 ########################################################################
 # SQS
 #   make lambda-sqs-trigger QUEUE_NAME=lambda-runtime
 ########################################################################
-include .includes/sqs.mk
+include $(FRAMEWORK_DIR)/sqs.mk
 
 ########################################################################
 # EventBridge
@@ -240,16 +236,16 @@ include .includes/sqs.mk
 #   make enable-eventbridge-rule
 #   make delete-eventbridge-rule
 ########################################################################
-include .includes/eventbridge.mk
+include $(FRAMEWORK_DIR)/eventbridge.mk
 
 ########################################################################
 # S3
 #   make lambda-s3-trigger BUCKET_NAME=some-bucket
 #   aws s3 cp some-file s3://some-bucket/some-file
 ########################################################################
-include .includes/s3.mk
+include $(FRAMEWORK_DIR)/s3.mk
 
-include .includes/streaming.mk
+include $(FRAMEWORK_DIR)/streaming.mk
 
 CLEANFILES = \
     $(CACHE_DIR)/tarball-validated \
@@ -282,8 +278,8 @@ CLEANFILES = \
     $(CACHE_DIR)/lambda-sqs-permission \
     $(CACHE_DIR)/lambda-s3-sqs-trigger \
     $(CACHE_DIR)/lambda-concurrency \
-    $(BUILDER_HOME)/docker/cpanfile \
-    $(BUILDER_HOME)/docker/debian-packages \
+    $(CACHE_DIR)/cpanfile \
+    $(CACHE_DIR)/debian-packages \
 
 clean: ## remove all generated sentinels and docker artifacts
 	$(NO_ECHO)for a in $(CLEANFILES); do \

@@ -6,7 +6,7 @@ Amazon::API::Lambda 0
 Amazon::API::SQS 0
 Amazon::API::STS 0
 Amazon::Credentials 0
-Amazon::S3::Lite 0 
+Amazon::S3::Lite 0
 CLI::Simple 0
 CLI::Simple::Constants 0
 CLI::Simple::Utils 0

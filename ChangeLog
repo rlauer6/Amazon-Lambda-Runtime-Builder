@@ -1,3 +1,30 @@
+Sun Jun 14 14:42:23 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.1.0]:
+	* release-notes/release-notes-1.1.0.md: new
+	* release-notes.md: updated
+	* project.mk: renamed from share/project.mk
+	* share/Makefile.builder: new
+	* share/sqs.mk
+	(sqs-dlq): +DLQ_RETENTION
+	* share/Makefile.mk
+	- renamed because Makefiles get ignored
+	- include lambda.env, not project.mk
+	- set $FRAMEWORK_DIR to point to Makefiles distributed by this module
+	- INCLUDES_DIR removed, not used
+	- set DIST_TARBALL to tarball in root
+	- fix message when tarball not found
+	- assets formerly in docker now in $(CACHE_DIR))
+	- create a temp directory for docker context
+	- include all .mk files from $(FRAMEWORK_DIR)
+	- remove REINSTALL_PACKAGES
+	* VERSION: bump
+	* buildspec.yml: add share/Makefile.builder, share/Makefile.mk, share/helper.mk
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Install.pm.in
+	(cmd_install): warn if copy fails
+	* requires: whitespce
+	* share/MANIFEST.json: remove all but policies, Makefile.mk, Makefile.builder, LambdaHandler
+
 Sat Jun 13 15:56:23 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.0.2]:

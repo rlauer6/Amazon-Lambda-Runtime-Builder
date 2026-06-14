@@ -17,6 +17,7 @@
 
 QUEUE_NAME         ?= lambda-runtime
 DLQ_NAME           ?= $(QUEUE_NAME)-dlq
+DLQ_RETENTION      ?= 1209600
 BATCH_SIZE         ?= 1
 RETENTION          ?= 86400
 VISIBILITY_TIMEOUT ?= 360
@@ -43,7 +44,7 @@ $(CACHE_DIR)/sqs-dlq: | $(CACHE_DIR) ## create dead letter queue
 	    exit 1; \
 	elif [[ -z "$$queue" || "$$queue" = "None" ]]; then \
 	    alr-helper create-queue $(DLQ_NAME) \
-	        retention:1209600; \
+	        retention:$(DLQ_RETENTION); \
 	    queue="$(DLQ_NAME)"; \
 	fi; \
 	test -e $@ || echo "$$queue" > $@

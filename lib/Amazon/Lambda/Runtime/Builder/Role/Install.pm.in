@@ -33,7 +33,8 @@ sub cmd_install {
 
     $self->get_logger->info( sprintf 'copying %s -> %s', $src, "$install_dir/$dest" );
 
-    copy $src, "$install_dir/$dest";
+    copy( $src, "$install_dir/$dest" )
+      or warn "WARNING: could not copy $src to $install_dir/$dest\n";
   }
 
   return $SUCCESS;
