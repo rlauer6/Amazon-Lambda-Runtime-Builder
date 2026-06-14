@@ -4,7 +4,7 @@ use strict;
 use warnings;
 
 use CLI::Simple::Constants qw(:booleans);
-use CLI::Simple::Utils qw(choose toPascalCase slurp_json);
+use CLI::Simple::Utils qw(choose slurp_json );
 use Data::Dumper;
 use English qw(-no_match_vars);
 use JSON;
@@ -55,6 +55,14 @@ sub cmd_lambda_update_function_code {
 
   die "ERROR: usage alr-builder-helper update-function function-name repo-name digest\n"
     if !$function_name || !$repo_name || !$digest;
+
+  die "ERROR: sprintf %s does not look like a digest\n", $digest
+    if $digest !~ /^sha256:/xsm;
+
+  if ( $repo_name !~ /dkr[.]ecr[.]us-east-1[.]amazonaws[.]com/ ) {
+    my $account = $self->_sts_get_account;
+    $repo_name = sprintf '%s.dkr.ecr.%s.amazonaws.com/%s', $account, $self->get_region, $repo_name;
+  }
 
   my $lambda = $self->_lambda;
 
@@ -389,13 +397,18 @@ sub cmd_lambda_update_event_source_mapping {
 #########################################################################
   my ($self) = @_;
 
-  my ( $uuid, @params ) = $self->get_args;
+  my (@params) = $self->get_args;
 
   my $lambda = $self->_lambda;
 
   my $event_source_mappings = $self->_parse_params(@params);
 
-  my $rsp = eval { $lambda->UpdateEventSourceMapping( { UUID => $uuid, %{$event_source_mappings} } ); };
+  $event_source_mappings->{UUID} = delete $event_source_mappings->{Uuid};
+
+  die "ERROR: uuid is a required parameter\n"
+    if !$event_source_mappings->{UUID};
+
+  my $rsp = eval { $lambda->UpdateEventSourceMapping($event_source_mappings); };
 
   return $self->_handle_response($rsp);
 }

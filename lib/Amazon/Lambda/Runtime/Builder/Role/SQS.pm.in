@@ -109,6 +109,33 @@ sub cmd_sqs_create_queue {
 }
 
 ########################################################################
+sub _queue_url {
+########################################################################
+  my ( $self, $queue_name ) = @_;
+
+  my $region  = $self->get_region;
+  my $account = $self->_sts_get_account;
+
+  return sprintf 'https://sqs.%s.amazonaws.com/%s/%s', $region, $account, $queue_name;
+}
+
+########################################################################
+sub cmd_purge_queue {
+########################################################################
+  my ($self) = @_;
+
+  my ($queue_name) = $self->get_args;
+
+  my $sqs = $self->_sqs;
+
+  my $queue_url = $self->_queue_url($queue_name);
+
+  my $rsp = eval { return $sqs->PurgeQueue( { QueueUrl => $queue_url } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
 sub _sqs_set_queue_attributes {
 ########################################################################
   my ( $self, %args ) = @_;
@@ -117,9 +144,7 @@ sub _sqs_set_queue_attributes {
 
   my $sqs = $self->_sqs;
 
-  my $region    = $sqs->get_region;
-  my $account   = $self->_sts_get_account;
-  my $queue_url = sprintf 'https://sqs.%s.amazonaws.com/%s/%s', $region, $account, $queue_name;
+  my $queue_url = $self->_queue_url($queue_name);
 
   return eval { return $sqs->SetQueueAttributes( { QueueUrl => $queue_url, Attributes => $attributes, } ); };
 }

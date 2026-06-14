@@ -4,7 +4,7 @@ use strict;
 use warnings;
 
 use CLI::Simple::Constants qw(:booleans);
-use CLI::Simple::Utils qw(slurp_json slurp);
+use CLI::Simple::Utils qw(choose slurp_json slurp toPascalCase);
 use Data::Dumper;
 use English qw(-no_match_vars);
 use File::Basename qw(basename);
@@ -32,6 +32,20 @@ our $VERSION = '@PACKAGE_VERSION@';
 caller or __PACKAGE__->main();
 
 ########################################################################
+sub _scalar_or_array {
+########################################################################
+  my ($value) = @_;
+
+  return $value
+    if defined $value && $value !~ /^\@/xsm;
+
+  $value =~ s/\@//xsm;
+  $value = [ split /,/xsm, $value ];
+
+  return $value;
+}
+
+########################################################################
 sub _parse_params {
 ########################################################################
   my ( $self, @params ) = @_;
@@ -48,7 +62,7 @@ sub _parse_params {
   my %configuration;
 
   foreach my $p (@params) {
-    my (@parts) = split /[:=]/xsm, $p;
+    my @parts = split /[:=]/xsm, $p;
 
     my ( $k, $v ) = choose {
       return @parts
@@ -57,10 +71,14 @@ sub _parse_params {
       die "ERROR: invalid parameter\n"
         if @parts > 3;
 
-      return ( $parts[0], { toPascalCase( $parts[1] ) => $parts[2] } );
+      my ($parameter) = toPascalCase( $parts[1] );
+
+      return ( $parts[0], { $parameter => _scalar_or_array( $parts[2] ) } );
     };
 
-    $configuration{ toPascalCase($k) } = $v;
+    ($k) = toPascalCase($k);
+    $v = ref $v ? $v : _scalar_or_array($v);
+    $configuration{$k} = $v;
   }
 
   return \%configuration;
@@ -86,11 +104,31 @@ sub _fetch_meta {
 ########################################################################
   my ( $self, $tar ) = @_;
 
+  $tar //= $self->get_tar;
+
   my $tarball   = $self->get_tarball;
   my $dist_name = basename( $tarball, qw(.tar.gz) );
   my $meta      = $tar->get_content("$dist_name/META.json");
 
   return decode_json($meta);
+}
+
+########################################################################
+sub cmd_get_meta {
+########################################################################
+  my ($self) = @_;
+
+  die "ERROR: set --tarball\n"
+    if !$self->get_tar;
+
+  my ($name) = $self->get_args;
+
+  die "ERROR: usage alr-helper --tarball tarball get-meta key\n"
+    if !$name;
+
+  print {*STDERR} $self->_fetch_meta->{$name};
+
+  return $SUCCESS;
 }
 
 ########################################################################
@@ -223,6 +261,7 @@ sub main {
     'get-lambda-policy'             => \&cmd_lambda_get_policy,
     'get-lifecycle-policy'          => \&cmd_ecr_get_lifecycle_policy,
     'get-login-password'            => \&cmd_ecr_get_login_password,
+    'get-meta'                      => \&cmd_get_meta,
     'get-queue-arn'                 => \&cmd_sqs_get_queue_arn,
     'get-queue-attributes'          => \&cmd_sqs_get_queue_attributes,
     'get-queue-policy'              => \&cmd_sqs_get_queue_policy,
@@ -238,6 +277,7 @@ sub main {
     'put-lifecycle-policy'          => \&cmd_ecr_put_lifecycle_policy,
     'put-rule-expression'           => \&cmd_eventbridge_put_rule_expression,
     'put-rule-pattern'              => \&cmd_eventbridge_put_rule_pattern,
+    'purge-queue'                   => \&cmd_sqs_purge_queue,
     'remove-targets'                => \&cmd_eventbridge_remove_targets,
     'remove-permission'             => \&cmd_lambda_remove_permission,
     'set-queue-bucket-policy'       => \&cmd_sqs_set_queue_bucket_policy,

@@ -2,11 +2,10 @@ package Amazon::Lambda::Runtime::Builder::Role::Install;
 
 use CLI::Simple::Constants qw(:booleans);
 use Cwd qw(cwd);
+use English qw(-no_match_vars);
 use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
-use English qw(-no_match_vars);
-
 use Role::Tiny;
 
 ########################################################################

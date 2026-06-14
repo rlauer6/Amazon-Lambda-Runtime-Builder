@@ -3,8 +3,6 @@ SHELL := /bin/bash
 
 .SHELLFLAGS := -ec
 
-VERSION := $(shell test -e ../VERSION && cat ../VERSION)
-
 -include project.mk
 
 include .includes/help.mk
@@ -22,7 +20,6 @@ INCLUDES_DIR  := .includes
 BUILDER_HOME  ?= $(shell echo $$(pwd))
 CACHE_DIR     := $(BUILDER_HOME)/.cache
 NO_ECHO       ?= @
-HANDLER_CLASS ?= LambdaHandler.pm
 DIST_TARBALL  ?= $(shell ls $(BUILDER_HOME)/../*.tar.gz 2>/dev/null | sort -V | tail -1)
 DIST_NAME     := $(shell tar --wildcards -xOf $(DIST_TARBALL) '*/META.json' 2>/dev/null | \
                    perl -MJSON -0ne 'print decode_json($$_)->{name}' 2>/dev/null)
@@ -44,8 +41,16 @@ RESOLVER               ?=
 # a version number change) has been pushed to a DarkPAN.
 REINSTALL_PACKAGES     ?=
 
+NEEDS_TARBALL := $(filter-out clean,$(MAKECMDGOALS))
+
+ifeq ($(HANDLER_CLASS),)
+  $(error You must specify the HANDLER_CLASS)
+endif
+
+ifneq ($(NEEDS_TARBALL),)
 ifeq ($(DIST_TARBALL),)
   $(error No tarball found in $(BUILDER_HOME)/../ - Layer 1 must produce a dist tarball first)
+endif
 endif
 
 ifdef REBUILD
@@ -131,7 +136,7 @@ include .includes/ecr-login.mk
 # push image to ECR repository
 ########################################################################
 $(CACHE_DIR)/deploy: $(CACHE_DIR)/ecr-repo $(CACHE_DIR)/image | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true
 	$(call ecr_login,$(shell cat $(CACHE_DIR)/ecr-repo))
 	$(NO_ECHO)URI=$$(cat $(CACHE_DIR)/ecr-repo); \
 	docker tag $(REPO_NAME):latest $$URI:latest; \
@@ -186,7 +191,7 @@ update-policies: $(POLICIES_FILE) ## re-attach IAM policies from policies file
 ########################################################################
 $(CACHE_DIR)/lambda-function: $(CACHE_DIR)/ecr-repo $(CACHE_DIR)/lambda-policies | $(CACHE_DIR)/deploy
 	$(NO_ECHO)function="$$(alr-helper get-function $(FUNCTION_NAME))"; \
-	if [[ "$$function" = "" }]]; then \
+	if [[ "$$function" = "" ]]; then \
 	    URI=$$(cat $(CACHE_DIR)/ecr-repo); \
 	    function="$$(alr-helper create-function $(FUNCTION_NAME) $(ROLE_NAME) $$URI)"; \
 	elif ! echo "$$function" | grep -q '"FunctionName"'; then \
