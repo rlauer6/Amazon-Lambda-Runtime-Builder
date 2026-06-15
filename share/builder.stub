@@ -1,0 +1,9 @@
+# >>> ALRB builder.mk integration (managed by `alr-builder install`) >>>
+ALRB_FRAMEWORK_DIR := $(shell perl -MFile::ShareDir=dist_dir -e 'print dist_dir("Amazon-Lambda-Runtime-Builder")' 2>/dev/null)
+
+ifeq ($(ALRB_FRAMEWORK_DIR),)
+  $(error Amazon::Lambda::Runtime::Builder is not installed - run: cpanm Amazon::Lambda::Runtime::Builder)
+endif
+
+include $(ALRB_FRAMEWORK_DIR)/builder.mk
+# <<< ALRB builder.mk integration <<<

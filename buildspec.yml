@@ -23,6 +23,8 @@ extra-files:
       - share/LambdaHandler.pm
       - share/Makefile.mk
       - share/Makefile.builder
+      - share/builder.stub
+      - share/builder.mk
       - share/ecr-create-repo.mk
       - share/ecr-login.mk
       - share/eventbridge.mk

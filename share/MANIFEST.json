@@ -1,8 +1,8 @@
 {
     "files": {
-        "LambdaHandler.pm" : "LambdaHandler.pm",
-        "policies" : "policies",
-        "Makefile.builder": "Makefile.builder"
+        "LambdaHandler.pm" : { "dest" : "LambdaHandler.pm", "overwrite": "never" },
+        "policies" : { "dest": "policies", "overwrite": "never" },
+        "Makefile.builder": { "dest": "Makefile.builder", "overwrite": "always" }
     },
     "dependencies": {
         "required": [

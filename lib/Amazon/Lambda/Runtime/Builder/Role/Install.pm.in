@@ -1,6 +1,8 @@
 package Amazon::Lambda::Runtime::Builder::Role::Install;
 
 use CLI::Simple::Constants qw(:booleans);
+use CLI::Simple::Utils qw(slurp);
+
 use Cwd qw(cwd);
 use English qw(-no_match_vars);
 use File::Basename qw(dirname basename);
@@ -22,19 +24,63 @@ sub cmd_install {
   }
 
   foreach my $file ( keys %{$manifest} ) {
-    my $src = sprintf '%s/%s', $dist_dir, basename($file);
+    my $entry = $manifest->{$file};
+    my ( $dest, $overwrite ) = ref $entry ? ( $entry->{dest}, $entry->{overwrite} ) : ( $entry, undef );
 
-    my $dest = $manifest->{$file};
-    my $dir  = dirname($dest);
+    my $src = sprintf '%s/%s', $dist_dir, basename($file);
+    my $dir = dirname($dest);
 
     if ( !-d "$install_dir/$dir" ) {
       make_path("$install_dir/$dir");
+    }
+
+    if ( -e "$install_dir/$dest" ) {
+      if ( $overwrite eq 'never' ) {
+        $self->get_logger->info("$dest exists - leaving as-is (customized template)");
+        next;
+      }
+      elsif ( $overwrite ne 'always' ) {
+        die "ERROR: $install_dir/$dest exists...use --force\n"
+          if !$self->get_force;
+      }
     }
 
     $self->get_logger->info( sprintf 'copying %s -> %s', $src, "$install_dir/$dest" );
 
     copy( $src, "$install_dir/$dest" )
       or warn "WARNING: could not copy $src to $install_dir/$dest\n";
+  }
+
+  # update or install project.mk with builder stub
+  if ( !-e "$install_dir/project.mk" ) {
+    my $src = sprintf '%s/builder.stub', $dist_dir;
+    copy( $src, "$install_dir/project.mk" )
+      or warn "WARNING: could not copy builder.stub to $install_dir/project.mk\n";
+  }
+  else {
+    my $project_mk_src = slurp("$install_dir/project.mk");
+
+    my $builder_stub = slurp("$dist_dir/builder.stub");
+    my $marker       = '# >>> ALRB builder.mk integration';
+
+    if ( $project_mk_src =~ /\Q$marker\E/xsm ) {
+      $self->get_logger->info('project.mk already contains builder.mk integration - skipping');
+    }
+    else {
+      $project_mk_src .= "\n$builder_stub";
+
+      rename "$install_dir/project.mk", "$install_dir/project.mk.bak";
+
+      die "ERROR: could not create a backup for project.mk, builder targets not installed\n"
+        if !-e "$install_dir/project.mk.bak";
+
+      open my $fh, '>', "$install_dir/project.mk"
+        or die "ERROR: could not open $install_dir/project.mk for updating\n$OS_ERROR";
+
+      print {$fh} $project_mk_src;
+
+      close $fh;
+    }
   }
 
   return $SUCCESS;

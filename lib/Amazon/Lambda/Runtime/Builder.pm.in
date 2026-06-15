@@ -38,6 +38,10 @@ sub init {
 
   $self->set_dist_dir($dist_dir);
 
+  if ( my $profile = $self->get_profile ) {
+    $ENV{AWS_PROFILE} = $self->get_profile;
+  }
+
   return;
 }
 
@@ -56,6 +60,7 @@ sub main {
     install-dir|i=s
     log-level|l=s
     profile|p=s
+    force|f
   );
 
   my $cli = Amazon::Lambda::Runtime::Builder->new(

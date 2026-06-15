@@ -1,3 +1,23 @@
+Mon Jun 15 08:35:22 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.1.1]:
+	* VERSION: bump
+	* buildspec.yml
+	- +builder.stub, builder.mk
+	* lib/Amazon/Lambda/Runtime/Builder.pm.in
+	- --force option (not used yet)
+	- set AWS_PROFILE if --profile set
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Install.pm.in
+	(cmd_install)
+	- add builder.stub to project.mk or copy to project.mk
+	- use new file attributes
+	* share/MANIFEST.json
+	- add dest, overwite attributes
+	* share/Makefile.builder
+	- check to see if ALRB installed
+	* share/builder.mk: new
+	* share/builder.stub: new
+
 Sun Jun 14 14:42:23 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.1.0]:
