@@ -19,3 +19,4 @@ Readonly 2.05
 Role::Tiny 2.002004
 Role::Tiny::With 2.002004
 URI::Escape 5.34
+YAML::Tiny 1.76

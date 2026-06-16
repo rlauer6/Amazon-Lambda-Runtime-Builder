@@ -1,10 +1,11 @@
-version: 1
+version: 1.1
 
 # trigger.type values this version of lambda-mapping.yml understands.
 # generate-yaml/init() validate lambda.yaml's trigger.type against this
 # list and error clearly if it names a pattern not yet supported.
 trigger_types:
   - s3-sqs
+  - eventbridge
 
 mapping:
   - yaml: image.repo
@@ -102,3 +103,15 @@ mapping:
     omit_if_false: true
     applies_to:
       - s3-sqs
+
+  - yaml: trigger.schedule
+    env: SCHEDULE_EXPRESSION
+    default: 'rate(1 day)'
+    applies_to:
+      - eventbridge
+
+  - yaml: trigger.rule_name
+    env: RULE_NAME
+    default: lambda-handler-rule
+    applies_to:
+      - eventbridge

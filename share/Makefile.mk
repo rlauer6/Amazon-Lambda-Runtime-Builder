@@ -60,12 +60,12 @@ lambda-role:                $(CACHE_DIR)/lambda-role ## create IAM execution rol
 ecr-repo:                   $(CACHE_DIR)/ecr-repo 
 deploy:                     $(CACHE_DIR)/deploy ## push image to ECR and tag as latest
 image:                      $(CACHE_DIR)/image ## build Docker image from distribution tarball
-update-function:            $(CACHE_DIR)/update-function ## update Lambda function code to latest image
 lambda-s3-trigger:          $(CACHE_DIR)/lambda-s3-trigger
 lambda-sqs-trigger:         $(CACHE_DIR)/lambda-sqs-trigger
 lambda-eventbridge-trigger: $(CACHE_DIR)/lambda-eventbridge-trigger
 sns:                        $(CACHE_DIR)/sns
 tarball-validated:          $(CACHE_DIR)/tarball-validated
+update-function:            lambda-function ## update Lambda function code to latest image
 
 $(CACHE_DIR):
 	mkdir -p $(CACHE_DIR)
@@ -173,6 +173,10 @@ $(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
 POLICIES_FILE ?= policies
 
 ifeq ($(ROLE_PROFILE),)
+  ifeq ($(wildcard $(POLICIES_FILE)),)
+    $(error No policies file '$(POLICIES_FILE)' found and ROLE_PROFILE is not set. \
+      Either create a policies file or set ROLE_PROFILE in lambda.env)
+  endif
   ATTACH_POLICIES_CMD = alr-helper attach-policy $(ROLE_NAME) $(POLICIES_FILE)
   POLICIES_PREREQ     = $(POLICIES_FILE)
 else
@@ -192,28 +196,29 @@ update-policies: $(POLICIES_PREREQ) ## re-attach IAM policies (from role.profile
 ########################################################################
 # create/update Lambda function
 ########################################################################
-$(CACHE_DIR)/lambda-function: $(CACHE_DIR)/ecr-repo $(CACHE_DIR)/lambda-policies | $(CACHE_DIR)/deploy
-	$(NO_ECHO)function="$$(alr-helper get-function $(FUNCTION_NAME))"; \
-	if [[ "$$function" = "" ]]; then \
-	    URI=$$(cat $(CACHE_DIR)/ecr-repo); \
-	    function="$$(alr-helper create-function $(FUNCTION_NAME) $(ROLE_NAME) $$URI)"; \
-	elif ! echo "$$function" | grep -q '"FunctionName"'; then \
-	    echo "ERROR: get-function failed: $$function" >&2; \
-	    exit 1; \
-	fi; \
-	test -e $@ || { echo "$$function" > $@ && chmod 444 $@; }
 
 $(CACHE_DIR)/image-digest: $(CACHE_DIR)/deploy | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	alr-helper describe-images $(REPO_NAME) | \
 	  perl -MJSON -0ne 'print decode_json($$_)->{imageDigest}' > $@ && chmod 444 $@
 
-$(CACHE_DIR)/update-function: $(CACHE_DIR)/image-digest | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
-	DIGEST=$$(cat $<); \
-	URI=$$(cat $(CACHE_DIR)/ecr-repo); \
-        alr-helper update-function $(FUNCTION_NAME) $$URI $$DIGEST; \
-        echo "$$URI@$$DIGEST" > $@ && chmod 444 $@
+$(CACHE_DIR)/lambda-function: \
+    $(CACHE_DIR)/image-digest \
+    $(CACHE_DIR)/ecr-repo \
+    $(CACHE_DIR)/lambda-role \
+    $(CACHE_DIR)/lambda-policies | $(CACHE_DIR)
+	chmod -f 644 $@ 2>/dev/null || true; \
+	DIGEST="$$(cat $(CACHE_DIR)/image-digest)"; \
+	URI="$$(cat $(CACHE_DIR)/ecr-repo)"; \
+	function="$$(alr-helper get-function $(FUNCTION_NAME) 2>/dev/null)"; \
+	if [[ -z "$$function" ]]; then \
+	  alr-helper create-function $(FUNCTION_NAME) $(ROLE_NAME) $$URI; \
+	elif ! echo "$$function" | grep -q '"FunctionName"'; then \
+	  echo "ERROR: get-function failed: $$function" >&2; exit 1; \
+	else \
+	  alr-helper update-function $(FUNCTION_NAME) $$URI $$DIGEST; \
+	fi; \
+	echo "$$URI@$$DIGEST" > $@ && chmod 444 $@
 
 ########################################################################
 # invoke Lambda function
@@ -278,7 +283,6 @@ CLEANFILES = \
     $(CACHE_DIR)/sns \
     $(CACHE_DIR)/sqs-queue \
     $(CACHE_DIR)/s3-bucket \
-    $(CACHE_DIR)/update-function \
     $(CACHE_DIR)/sqs-dlq \
     $(CACHE_DIR)/sqs-queue-policy \
     $(CACHE_DIR)/sqs-queue-redrive \
@@ -305,7 +309,6 @@ clean: ## remove all generated sentinels and docker artifacts
     deploy \
     image \
     invoke \
-    update-function \
     update-policies \
     lambda-s3-trigger \
     lambda-sqs-trigger \

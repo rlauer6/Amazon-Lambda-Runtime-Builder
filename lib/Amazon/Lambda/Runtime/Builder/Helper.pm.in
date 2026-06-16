@@ -29,7 +29,7 @@ use parent qw(CLI::Simple);
 
 our $VERSION = '@PACKAGE_VERSION@';
 
-caller or __PACKAGE__->main();
+caller or exit __PACKAGE__->main();
 
 ########################################################################
 sub _scalar_or_array {
@@ -89,7 +89,7 @@ sub _handle_response {
 ########################################################################
   my ( $self, $rsp ) = @_;
 
-  if ( !$rsp && $EVAL_ERROR ) {
+  if ($EVAL_ERROR) {
     print {*STDERR} $EVAL_ERROR;
     return $FAILURE;
   }
@@ -286,6 +286,7 @@ sub main {
     'update-event-source-mapping'   => \&cmd_lambda_update_event_source_mapping,
     'update-function'               => \&cmd_lambda_update_function_code,
     'update-function-configuration' => \&cmd_lambda_update_function_configuration,
+    'wait-function-active'          => \&cmd_lambda_wait_function_active,
   );
 
   my @option_specs = qw(
@@ -309,7 +310,9 @@ sub main {
     abbreviations => $TRUE,
   );
 
-  return $cli->run;
+  my $exit_code = $cli->run;
+
+  return $exit_code;
 }
 
 1;

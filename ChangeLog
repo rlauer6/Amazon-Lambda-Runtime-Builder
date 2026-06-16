@@ -1,3 +1,55 @@
+Tue Jun 16 14:09:00 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.2.1]:
+	* VERSION: bump
+	* release-notes.md: updated
+	* release-notes/release-notes-1.2.1.md: new
+	* requires: +YAML::Tiny
+	* cpanfile: likewise
+	* lib/Amazon/Lambda/Runtime/Builder/Helper.pm.in
+	- exit __PACKAGE__->main()
+	(handle_reponse)
+	- check $EVAL_ERROR first
+	(main)
+	- +wait-function-active
+	- capture exit code
+	* lib/Amazon/Lambda/Runtime/Builder/Role/ECR.pm.in
+	- use JSON
+	(cmd_ecr_create_repository)
+	- refactor using _handle_response()
+	(cmd_ecr_describe_repositories): likewise
+	(cmd_ecr_get_lifecycle_policy): likewise
+	(cmd_ecr_put_lifecycle_policy): likewise
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Lambda.pm.in
+	(cmd_lambda_udpate_function_code)
+	- call _wait_function_active() first
+	- call same at end
+	(_wait_function_active): new
+	(cmd_lambda_wait_function_active): new
+	(cmd_lambda_create_function)
+	- Arn is a member of Role
+	* share/Makefile.mk
+	- update-function = lambda-function
+	- better error message when no ROLE_PROFILE
+	(lambda-function)
+	- support update and create
+	(CLEANFILES): -update-function
+	(clean): likewise
+	* share/builder.mk
+	- +lambda-function, lambda-eventbridge-pipeline
+	- +enable-eventbridge-rule, disable-eventbridge-rule, delete-eventbridge-rule
+	* share/eventbridge.mk
+	- +RULE_STATE
+	(lambda-eventbridge-rule): use $(RULE_STATE)
+	(lamda-eventbridge-pipeline): new
+	(PHONY): + above
+	* share/lambda-mapping.yml
+	- version bump
+	(trigger_types): +eventbridge
+	(mapping)
+	- +trigger.schedule, trigger.rule_name
+
+
 Mon Jun 15 14:51:00 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.2.0]:

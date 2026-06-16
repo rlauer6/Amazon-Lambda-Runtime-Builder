@@ -66,6 +66,8 @@ sub cmd_lambda_update_function_code {
 
   my $lambda = $self->_lambda;
 
+  $self->_wait_function_active( $function_name, $lambda );
+
   my $rsp = eval {
     $lambda->UpdateFunctionCode(
       { FunctionName => $function_name,
@@ -81,6 +83,25 @@ sub cmd_lambda_update_function_code {
 
   print {*STDOUT} JSON->new->pretty->encode($rsp);
 
+  return $self->_wait_function_active( $function_name, $lambda );
+}
+
+########################################################################
+sub cmd_lambda_wait_function_active {
+########################################################################
+  my ($self) = @_;
+
+  my ($function_name) = $self->get_args;
+
+  return $self->_wait_function_active($function_name);
+}
+
+########################################################################
+sub _wait_function_active {
+########################################################################
+  my ( $self, $function_name, $lambda ) = @_;
+
+  $lambda //= $self->_lambda;
   eval {
     local $SIG{ALRM} = sub { die "timed out\n"; };
 
@@ -99,6 +120,7 @@ sub cmd_lambda_update_function_code {
 
   if ($EVAL_ERROR) {
     print {*STDERR} "timed out waiting for function to be come activated\n";
+    return $FAILURE;
   }
 
   return $SUCCESS;
@@ -154,8 +176,9 @@ sub cmd_lambda_create_function {
 
   my ( $function_name, $role_name, $image ) = $self->get_args;
 
-  my $role     = $self->_iam_get_role($role_name);
-  my $role_arn = $role->{Arn};
+  my $role = $self->_iam_get_role($role_name);
+
+  my $role_arn = $role->{Role}{Arn};
 
   my $timeout = $self->get_timeout // $DEFAULT_LAMBDA_CREATE_TIMEOUT;
 
