@@ -102,7 +102,12 @@ $(CACHE_DIR)/lambda-s3-sqs-trigger: $(CACHE_DIR)/sqs-queue-policy | $(CACHE_DIR)
 	test -e $@ || echo "$(QUEUE_NAME)" > $@
 
 .PHONY: lambda-sqs-pipeline
-lambda-sqs-pipeline: $(CACHE_DIR)/lambda-sqs-trigger $(CACHE_DIR)/lambda-concurrency $(CACHE_DIR)/lambda-s3-sqs-trigger ## full s3-sqs infrastructure
+lambda-sqs-pipeline: \
+    $(CACHE_DIR)/lambda-sqs-trigger \
+    $(CACHE_DIR)/lambda-concurrency \
+    $(CACHE_DIR)/lambda-configuration \
+    $(CACHE_DIR)/lambda-s3-sqs-trigger \
+    $(CACHE_DIR)/lambda-sqs-response-types
 
 $(CACHE_DIR)/lambda-sqs-permission: $(CACHE_DIR)/lambda-function $(CACHE_DIR)/sqs-queue | $(CACHE_DIR)
 	$(NO_ECHO)permission="$$(alr-helper get-lambda-policy $(FUNCTION_NAME) 2>&1 || true)"; \
@@ -116,3 +121,25 @@ $(CACHE_DIR)/lambda-sqs-permission: $(CACHE_DIR)/lambda-function $(CACHE_DIR)/sq
 	        arn:aws:sqs:$(REGION):$(AWS_ACCOUNT):$(QUEUE_NAME); \
 	fi; \
 	test -e $@ || echo "$(QUEUE_NAME)" > $@
+
+MEMORY ?= 128
+
+$(CACHE_DIR)/lambda-configuration: $(CACHE_DIR)/lambda-function lambda.env | $(CACHE_DIR)
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	alr-helper update-function-configuration $(FUNCTION_NAME) memory-size:$(MEMORY) timeout:$(TIMEOUT) > $@ && chmod 444 $@
+
+lambda-configuration: $(CACHE_DIR)/lambda-configuration ## update function memory/timeout from lambda.env
+
+PARTIAL_BATCH_RESPONSE ?= false
+
+ifeq ($(PARTIAL_BATCH_RESPONSE),true)
+  RESPONSE_TYPES_ARG = response-types:@ReportBatchItemFailures
+else
+  RESPONSE_TYPES_ARG = response-types:@
+endif
+
+$(CACHE_DIR)/lambda-sqs-response-types: $(CACHE_DIR)/lambda-sqs-trigger lambda.env | $(CACHE_DIR)
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	uuid=$$(alr-helper list-event-source-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | \
+	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}'); \
+	alr-helper update-event-source-mapping uuid:$$uuid $(RESPONSE_TYPES_ARG) > $@ && chmod 444 $@

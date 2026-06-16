@@ -66,6 +66,60 @@ sub _policy_arn {
 }
 
 ########################################################################
+sub cmd_attach_policies_from_profile {
+########################################################################
+  my ($self) = @_;
+
+  my ( $role_name, $profile_name ) = $self->get_args;
+
+  die "ERROR: usage: alr-helper attach-policies-from-profile role-name profile-name\n"
+    if !$role_name || !$profile_name;
+
+  require File::ShareDir;
+  require YAML::Tiny;
+
+  my $dist_dir      = File::ShareDir::dist_dir('Amazon-Lambda-Runtime-Builder');
+  my $profiles_file = "$dist_dir/profiles.yml";
+
+  die "ERROR: profiles.yml not found at $profiles_file\n"
+    if !-e $profiles_file;
+
+  my $yaml = eval { YAML::Tiny->read($profiles_file); };
+
+  die "ERROR: could not parse $profiles_file\n$EVAL_ERROR"
+    if !$yaml;
+
+  my $profile = $yaml->[0]{profiles}{$profile_name};
+
+  die "ERROR: no such profile: $profile_name (see $profiles_file)\n"
+    if !$profile;
+
+  my $iam = $self->_iam;
+
+  eval {
+    foreach my $policy_name ( @{ $profile->{policies} || [] } ) {
+      my $policy_arn = $self->_policy_arn($policy_name);
+
+      die "ERROR: could not resolve policy ARN for $policy_name\n"
+        if !$policy_arn;
+
+      $iam->AttachRolePolicy(
+        { RoleName  => $role_name,
+          PolicyArn => $policy_arn,
+        }
+      );
+    }
+  };
+
+  if ($EVAL_ERROR) {
+    print {*STDERR} $EVAL_ERROR;
+    return $FAILURE;
+  }
+
+  return $self->cmd_iam_list_attached_policies;
+}
+
+########################################################################
 sub cmd_iam_detach_role_policy {
 ########################################################################
   my ($self) = @_;

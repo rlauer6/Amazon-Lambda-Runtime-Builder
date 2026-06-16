@@ -1,0 +1,104 @@
+version: 1
+
+# trigger.type values this version of lambda-mapping.yml understands.
+# generate-yaml/init() validate lambda.yaml's trigger.type against this
+# list and error clearly if it names a pattern not yet supported.
+trigger_types:
+  - s3-sqs
+
+mapping:
+  - yaml: image.repo
+    env: REPO_NAME
+    default: perl-lambda
+
+  - yaml: image.handler
+    env: HANDLER_CLASS
+    required: true
+
+  - yaml: lambda.name
+    env: FUNCTION_NAME
+    default: lambda-handler
+
+  - yaml: lambda.timeout
+    env: TIMEOUT
+    default: 30
+
+  - yaml: lambda.memory
+    env: MEMORY
+    default: 128
+
+  - yaml: lambda.concurrency
+    env: CONCURRENCY
+    default: 1
+
+  - yaml: role.name
+    env: ROLE_NAME
+    default: lambda-role
+
+  - yaml: role.profile
+    env: ROLE_PROFILE
+
+  - yaml: trigger.bucket
+    env: BUCKET_NAME
+    required: true
+    applies_to:
+      - s3-sqs
+
+  - yaml: trigger.prefix
+    env: KEY_PREFIX
+    applies_to:
+      - s3-sqs
+
+  - yaml: trigger.event
+    env: S3_EVENT
+    default: 's3:ObjectCreated:*'
+    applies_to:
+      - s3-sqs
+
+  - yaml: trigger.queue.name
+    env: QUEUE_NAME
+    default: lambda-runtime
+    applies_to:
+      - s3-sqs
+
+  - yaml: trigger.queue.batch_size
+    env: BATCH_SIZE
+    default: 1
+    applies_to:
+      - s3-sqs
+
+  - yaml: trigger.queue.visibility_timeout
+    env: VISIBILITY_TIMEOUT
+    default: 360
+    applies_to:
+      - s3-sqs
+
+  - yaml: trigger.queue.retention
+    env: RETENTION
+    default: 86400
+    applies_to:
+      - s3-sqs
+
+  - yaml: trigger.queue.receive_count
+    env: RECEIVE_COUNT
+    default: 3
+    applies_to:
+      - s3-sqs
+
+  - yaml: trigger.queue.dlq.name
+    env: DLQ_NAME
+    applies_to:
+      - s3-sqs
+
+  - yaml: trigger.queue.dlq.retention
+    env: DLQ_RETENTION
+    default: 1209600
+    applies_to: 
+      - s3-sqs
+
+  - yaml: trigger.queue.partial_batch_response
+    env: PARTIAL_BATCH_RESPONSE
+    default: false
+    omit_if_false: true
+    applies_to:
+      - s3-sqs

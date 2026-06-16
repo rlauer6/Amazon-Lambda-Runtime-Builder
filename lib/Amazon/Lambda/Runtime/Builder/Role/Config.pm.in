@@ -1,0 +1,316 @@
+package Amazon::Lambda::Runtime::Builder::Role::Config;
+
+use strict;
+use warnings;
+
+use CLI::Simple::Constants qw(:booleans);
+use English qw(-no_match_vars);
+use List::Util qw(pairs);
+
+use Role::Tiny;
+
+########################################################################
+sub _yaml_get {
+########################################################################
+  my ( $node, $path ) = @_;
+
+  foreach my $key ( split /[.]/xsm, $path ) {
+    return
+      if !ref $node || !exists $node->{$key};
+
+    $node = $node->{$key};
+  }
+
+  return $node;
+}
+
+########################################################################
+sub _load_mapping {
+########################################################################
+  my ($self) = @_;
+
+  require YAML::Tiny;
+
+  my $dist_dir     = $self->get_dist_dir;
+  my $mapping_file = "$dist_dir/lambda-mapping.yml";
+
+  return YAML::Tiny->read($mapping_file)->[0];
+}
+
+########################################################################
+sub _lambda_env_needs_regen {
+########################################################################
+  my ( $self, $mapping_version ) = @_;
+
+  return $FALSE if !-e 'lambda.yaml';
+  return $TRUE  if !-e 'lambda.env';
+
+  if ( ( stat 'lambda.yaml' )[9] > ( stat 'lambda.env' )[9] ) {
+    return $TRUE;
+  }
+
+  open my $fh, '<', 'lambda.env'
+    or return $TRUE;
+
+  my $first_line = <$fh>;
+
+  close $fh;
+
+  if ( $first_line =~ /mapping \s v(\d+)/xsm ) {
+    return $TRUE if $1 != $mapping_version;
+  }
+  else {
+    return $TRUE;
+  }
+
+  return $FALSE;
+}
+
+########################################################################
+sub _generate_lambda_env {
+########################################################################
+  my ($self) = @_;
+
+  require YAML::Tiny;
+
+  my $mapping_doc     = $self->_load_mapping;
+  my $mapping_version = $mapping_doc->{version};
+
+  return
+    if !$self->_lambda_env_needs_regen($mapping_version);
+
+  my $yaml = eval { YAML::Tiny->read('lambda.yaml'); };
+
+  if ( !$yaml ) {
+    $self->get_logger->warn("could not parse lambda.yaml: $EVAL_ERROR");
+    return;
+  }
+
+  my $config = $yaml->[0];
+
+  my @lines;
+  my $prev_section;
+
+  foreach my $entry ( @{ $mapping_doc->{mapping} } ) {
+    my $path  = $entry->{yaml};
+    my $var   = $entry->{env};
+    my $value = _yaml_get( $config, $path );
+
+    if ( !defined $value ) {
+      if ( $entry->{required} ) {
+        $self->get_logger->warn("$path is required in lambda.yaml (maps to $var) - not regenerating lambda.env");
+        return;
+      }
+
+      next;
+    }
+
+    next if $entry->{omit_if_false} && !$value;
+
+    my ($section) = split /[.]/xsm, $path;
+
+    if ( @lines && $section ne $prev_section ) {
+      push @lines, q{};
+    }
+
+    $prev_section = $section;
+
+    push @lines, sprintf '%-20s= %s', $var, $value;
+  }
+
+  my $header = sprintf <<'END_HEADER', $mapping_version;
+# lambda.env - GENERATED from lambda.yaml by alr-builder (mapping v%d)
+# Hand edits will be overwritten. Edit lambda.yaml instead, or
+# delete lambda.yaml to make this file hand-editable.
+END_HEADER
+
+  open my $fh, '>', 'lambda.env'
+    or do {
+    $self->get_logger->warn("could not open lambda.env for writing: $OS_ERROR");
+    return;
+    };
+
+  print {$fh} $header;
+  print {$fh} "\n";
+  print {$fh} join( "\n", @lines ), "\n";
+
+  close $fh;
+
+  $self->get_logger->info('regenerated lambda.env from lambda.yaml');
+
+  return;
+}
+
+########################################################################
+sub _yaml_set {
+########################################################################
+  my ( $node, $path, $value ) = @_;
+
+  my @keys = split /[.]/xsm, $path;
+  my $last = pop @keys;
+
+  foreach my $key (@keys) {
+    $node->{$key} //= {};
+    $node = $node->{$key};
+  }
+
+  $node->{$last} = $value;
+
+  return;
+}
+
+########################################################################
+sub _walk_mapping {
+########################################################################
+  my ( $self, $provided ) = @_;
+
+  my $mapping_doc  = $self->_load_mapping;
+  my $trigger_type = $mapping_doc->{trigger_types}[0];
+
+  my ( @missing, @defaulted, @customized );
+
+  foreach my $entry ( @{ $mapping_doc->{mapping} } ) {
+    if ( $entry->{applies_to} ) {
+      next if !grep { $_ eq $trigger_type } @{ $entry->{applies_to} };
+    }
+
+    my $var   = $entry->{env};
+    my $value = $provided->{$var};
+
+    if ( !defined $value ) {
+      if ( $entry->{required} ) {
+        push @missing, $entry;
+      }
+      elsif ( exists $entry->{default} ) {
+        push @defaulted, [ $entry, $entry->{default} ];
+      }
+
+      next;
+    }
+
+    if ( $entry->{omit_if_false} && !$value ) {
+      push @defaulted, [ $entry, $value ];
+      next;
+    }
+
+    if ( exists $entry->{default} && "$value" eq "$entry->{default}" ) {
+      push @defaulted, [ $entry, $value ];
+    }
+    else {
+      push @customized, [ $entry, $value ];
+    }
+  }
+
+  return {
+    trigger_type => $trigger_type,
+    missing      => \@missing,
+    defaulted    => \@defaulted,
+    customized   => \@customized,
+  };
+}
+########################################################################
+sub cmd_generate_yaml {
+########################################################################
+  my ($self) = @_;
+
+  die "ERROR: lambda.env not found in current directory\n"
+    if !-e 'lambda.env';
+
+  die "ERROR: lambda.yaml already exists - remove it first to regenerate\n"
+    if -e 'lambda.yaml';
+
+  my %provided = $self->_read_lambda_env;
+  my $result   = $self->_walk_mapping( \%provided );
+
+  if ( @{ $result->{missing} } ) {
+    my @names = map { sprintf '%s (%s)', $_->{env}, $_->{yaml} } @{ $result->{missing} };
+
+    die "ERROR: cannot generate lambda.yaml - missing required values:\n  " . join( "\n  ", @names ) . "\n";
+  }
+
+  my $config = { trigger => { type => $result->{trigger_type} } };
+
+  foreach my $pair ( @{ $result->{customized} } ) {
+    my ( $entry, $value ) = @{$pair};
+    _yaml_set( $config, $entry->{yaml}, $value );
+  }
+
+  require YAML::Tiny;
+  YAML::Tiny->new($config)->write('lambda.yaml');
+
+  $self->get_logger->info('wrote lambda.yaml from lambda.env');
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub _read_lambda_env {
+########################################################################
+  my ($self) = @_;
+
+  my %env;
+
+  return %env if !-e 'lambda.env';
+
+  open my $fh, '<', 'lambda.env'
+    or die "ERROR: could not open lambda.env\n$OS_ERROR";
+
+  while ( my $line = <$fh> ) {
+    next if $line =~ /^\s*[#]/xsm || $line !~ /\S/xsm;
+
+    if ( $line =~ /^\s* (\w+) \s* = \s* (.*?) \s*$/xsm ) {
+      $env{$1} = $2;
+    }
+  }
+
+  close $fh;
+
+  return %env;
+}
+
+########################################################################
+sub cmd_check {
+########################################################################
+  my ($self) = @_;
+
+  my %provided = $self->_read_lambda_env;
+
+  my $result = $self->_walk_mapping( \%provided );
+
+  if ( @{ $result->{missing} } ) {
+    print {*STDOUT} "MISSING (required):\n";
+
+    foreach my $entry ( @{ $result->{missing} } ) {
+      printf {*STDOUT} "  %-22s (%s)\n", $entry->{env}, $entry->{yaml};
+    }
+
+    print {*STDOUT} "\n";
+  }
+  else {
+    print {*STDOUT} "All required fields present.\n\n";
+  }
+
+  if ( @{ $result->{customized} } ) {
+    print {*STDOUT} "Customized:\n";
+
+    foreach my $pair ( @{ $result->{customized} } ) {
+      my ( $entry, $value ) = @{$pair};
+      printf {*STDOUT} "  %-22s = %s\n", $entry->{env}, $value;
+    }
+
+    print {*STDOUT} "\n";
+  }
+
+  if ( @{ $result->{defaulted} } ) {
+    print {*STDOUT} "Using defaults:\n";
+
+    foreach my $pair ( @{ $result->{defaulted} } ) {
+      my ( $entry, $value ) = @{$pair};
+      printf {*STDOUT} "  %-22s = %s\n", $entry->{env}, $value;
+    }
+  }
+
+  return @{ $result->{missing} } ? $FAILURE : $SUCCESS;
+}
+
+1;

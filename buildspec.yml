@@ -25,6 +25,7 @@ extra-files:
       - share/Makefile.builder
       - share/builder.stub
       - share/builder.mk
+      - share/lambda-mapping.yml
       - share/ecr-create-repo.mk
       - share/ecr-login.mk
       - share/eventbridge.mk

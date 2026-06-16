@@ -14,6 +14,7 @@ use English qw(-no_match_vars);
 use Role::Tiny::With;
 
 with 'Amazon::Lambda::Runtime::Builder::Role::CheckDeps';
+with 'Amazon::Lambda::Runtime::Builder::Role::Config';
 with 'Amazon::Lambda::Runtime::Builder::Role::Install';
 
 __PACKAGE__->use_log4perl( level => 'info' );
@@ -35,11 +36,16 @@ sub init {
   $manifest = $manifest->{files};
 
   $self->set_manifest($manifest);
-
   $self->set_dist_dir($dist_dir);
 
-  if ( my $profile = $self->get_profile ) {
+  if ( $self->get_profile ) {
     $ENV{AWS_PROFILE} = $self->get_profile;
+  }
+
+  eval { $self->_generate_lambda_env };
+
+  if ($EVAL_ERROR) {
+    $self->get_logger->warn("lambda.env generation skipped: $EVAL_ERROR");
   }
 
   return;
@@ -50,9 +56,11 @@ sub main {
 ########################################################################
 
   my %commands = (
-    check   => \&cmd_dep_check,
-    install => \&cmd_install,
-    default => \&cmd_install,
+    'check'          => \&cmd_dep_check,
+    'check-env-file' => \&cmd_check,
+    'generate-yaml'  => \&cmd_generate_yaml,
+    'install'        => \&cmd_install,
+    'default'        => \&cmd_install,
   );
 
   my @option_specs = qw(
@@ -67,6 +75,7 @@ sub main {
     commands      => \%commands,
     option_specs  => \@option_specs,
     extra_options => [qw(dist_dir manifest)],
+    abbreviations => $TRUE,
   );
 
   $cli->run();
@@ -98,6 +107,12 @@ checker for Perl Lambda container images
   # Verify tools and IAM permissions before your first build
   alr-builder check
 
+  # Validate lambda.env (or lambda.yaml) against this Lambda's requirements
+  alr-builder check-env-file
+
+  # Migrate an existing lambda.env to lambda.yaml
+  alr-builder generate-yaml
+
 =head1 DESCRIPTION
 
 C<Amazon::Lambda::Runtime::Builder> is the companion deployment tool for
@@ -105,7 +120,7 @@ L<Amazon::Lambda::Runtime>. It handles everything outside of the Perl
 runtime itself: scaffolding a new project directory, verifying your build
 environment, and documenting the full build and deploy workflow.
 
-It provides two commands via the C<alr-builder> CLI:
+It provides four commands via the C<alr-builder> CLI:
 
 =over 4
 
@@ -115,6 +130,14 @@ handler template, cpanfile, and test fixtures) into a target directory.
 =item * B<check> - verifies that required system tools are present on
 your C<PATH> and, if the optional IAM modules are installed, confirms
 that your AWS credentials have sufficient permissions to build and deploy.
+
+=item * B<check-env-file> - validates C<lambda.env> (or C<lambda.yaml>, if
+present) against this Lambda's configuration requirements, reporting
+missing required values, customized values, and values using defaults.
+
+=item * B<generate-yaml> - migrates an existing, hand-written C<lambda.env>
+to a minimal C<lambda.yaml>, the starting point for the generate-on-demand
+workflow described in L</CONFIGURATION>.
 
 =back
 
@@ -185,6 +208,50 @@ for the full list.
 If the IAM modules are not installed, tool checks still run but permission
 checking is skipped with a warning.
 
+=head2 check-env-file
+
+  alr-builder check-env-file
+
+Validates the project's configuration against this Lambda's requirements
+(see L</CONFIGURATION>). Reads C<lambda.env> if present - an absent
+C<lambda.env> is treated as "nothing configured yet", useful for seeing
+the full set of required and defaulted values for a brand-new project -
+and reports three groups:
+
+=over 4
+
+=item * B<MISSING (required)> - required values with no default that are
+not set. C<image.handler> (C<HANDLER_CLASS>) is required for every trigger
+type; C<trigger.bucket> (C<BUCKET_NAME>) is additionally required for the
+C<s3-sqs> trigger type.
+
+=item * B<Customized> - values present in C<lambda.env> that differ from
+their C<lambda-mapping.yml> default, or have no default at all.
+
+=item * B<Using defaults> - values not set in C<lambda.env>, and the
+default that applies in their place.
+
+=back
+
+Exits non-zero if any required values are missing.
+
+=head2 generate-yaml
+
+  alr-builder generate-yaml
+
+Migrates an existing C<lambda.env> to C<lambda.yaml>. Requires
+C<lambda.env> to exist and C<lambda.yaml> to not already exist - this is a
+one-time migration step, not something to re-run once C<lambda.yaml> is
+your source of truth (see L</CONFIGURATION>).
+
+Performs the same validation as C<check-env-file> first; if any required
+values are missing, no C<lambda.yaml> is written and the missing fields
+are reported instead. Otherwise, writes a minimal C<lambda.yaml>
+containing only values that differ from their defaults (plus any field
+with no default, such as C<trigger.bucket>/C<trigger.prefix>) - fields
+matching their default are omitted, since C<Makefile.mk> applies the same
+defaults via C<lambda-mapping.yml>.
+
 =head1 OPTIONS
 
 =over 4
@@ -203,6 +270,72 @@ Log verbosity. Accepts Log4perl level names: C<trace>, C<debug>, C<info>
 Display usage information.
 
 =back
+
+=head1 CONFIGURATION
+
+Your Lambda's configuration - function name, memory, timeout, trigger
+details, and so on - lives in C<lambda.env>, a flat C<KEY = value> file
+that C<Makefile.mk> reads via C<-include lambda.env>. Every field has a
+corresponding entry in C<lambda-mapping.yml> (installed as part of this
+distribution), which also defines each field's default.
+
+C<lambda.env> can be managed in either of two ways:
+
+=over 4
+
+=item * B<Hand-written> - edit C<lambda.env> directly. This is the
+original, and still fully supported, workflow. Run C<alr-builder
+check-env-file> to verify it against C<lambda-mapping.yml>'s requirements.
+
+=item * B<Generated from lambda.yaml> - write a C<lambda.yaml> describing
+only the values that matter for your Lambda; everything else comes from
+C<lambda-mapping.yml>'s defaults. C<alr-builder> regenerates C<lambda.env>
+from C<lambda.yaml> automatically whenever C<lambda.yaml> is newer than
+C<lambda.env>, or when C<lambda-mapping.yml>'s mapping version has changed
+since C<lambda.env> was last generated. A generated C<lambda.env> begins
+with a header noting it is generated; hand edits to it are overwritten
+the next time C<lambda.yaml> changes.
+
+=back
+
+To move an existing C<lambda.env> to the C<lambda.yaml> workflow, run
+C<alr-builder generate-yaml> once.
+
+=head2 lambda.yaml structure
+
+For the C<s3-sqs> trigger type (currently the only supported type):
+
+  image:
+    repo: ...            # ECR repository name (REPO_NAME)
+    handler: ...         # Perl handler class (HANDLER_CLASS) - required
+  lambda:
+    name: ...            # function name (FUNCTION_NAME)
+    timeout: ...         # seconds (TIMEOUT)
+    memory: ...          # MB (MEMORY)
+    concurrency: ...     # reserved concurrency (CONCURRENCY)
+  role:
+    name: ...            # IAM role name (ROLE_NAME)
+    profile: ...         # named policy profile (ROLE_PROFILE)
+  trigger:
+    type: s3-sqs
+    bucket: ...          # source S3 bucket (BUCKET_NAME) - required
+    prefix: ...          # key prefix filter (KEY_PREFIX)
+    event: ...           # S3 event type (S3_EVENT)
+    queue:
+      name: ...                     # SQS queue name (QUEUE_NAME)
+      batch_size: ...               # (BATCH_SIZE)
+      visibility_timeout: ...       # seconds (VISIBILITY_TIMEOUT)
+      retention: ...                # seconds (RETENTION)
+      receive_count: ...            # max receives before DLQ (RECEIVE_COUNT)
+      partial_batch_response: ...   # true/false (PARTIAL_BATCH_RESPONSE)
+      dlq:
+        name: ...          # DLQ name (DLQ_NAME)
+        retention: ...     # seconds (DLQ_RETENTION)
+
+C<image.handler> is required for every trigger type; C<trigger.bucket> is
+additionally required for C<s3-sqs>. Every other field may be omitted, in
+which case C<lambda-mapping.yml>'s default applies. See L</MAKEFILE
+TARGETS> for how C<role.profile> is applied.
 
 =head1 WORKFLOW
 
@@ -230,18 +363,28 @@ own handler module. Add dependencies to C<cpanfile>.
 
 =item 4.
 
+B<Build a CPAN distribution> - C<install> provides a template handler
+module (C<LambdaHandler.pm.in>); turn it into a standard CPAN
+distribution (with its own C<META.json>/C<Makefile.PL> or equivalent)
+using whatever tooling you prefer, then run C<make dist> to produce a
+distribution tarball. C<make image> resolves C<DIST_TARBALL> to the most
+recent C<$(DIST_NAME)-*.tar.gz> in C<$(BUILDER_HOME)>, where C<DIST_NAME>
+comes from that distribution's C<META.json>.
+
+=item 5.
+
 B<First-time deployment> - builds the image, pushes to ECR, creates the
 IAM role and Lambda function:
 
   make lambda-function
 
-=item 5.
+=item 6.
 
 B<Test>:
 
   make invoke
 
-=item 6.
+=item 7.
 
 B<Deploy subsequent changes>:
 
@@ -250,6 +393,10 @@ B<Deploy subsequent changes>:
 =back
 
 =head2 Phase 1 - Build the container image
+
+C<make image> requires a CPAN distribution tarball
+(C<$(DIST_NAME)-*.tar.gz>) to already exist in C<$(BUILDER_HOME)> -
+see Workflow step 4.
 
 Lambda runs your handler inside an OCI-compliant container image. The
 image must contain a Perl interpreter, your CPAN dependencies,
@@ -342,7 +489,10 @@ keeps it attached on subsequent deployments.
 
 =head1 MAKEFILE VARIABLES
 
-Set these in your environment or pass as C<make> arguments:
+For C<s3-sqs> configuration (function name, memory, timeout, queue
+settings, and so on), see L</CONFIGURATION> and C<lambda-mapping.yml>.
+The variables below are either tool-level (apply regardless of trigger
+type) or specific to trigger types not yet covered by C<lambda.yaml>.
 
 =over 4
 
@@ -353,18 +503,6 @@ AWS profile. Default: C<default>
 =item C<REGION>
 
 AWS region. Default: C<us-east-1>
-
-=item C<REPO_NAME>
-
-ECR repository name. Default: C<perl-lambda>
-
-=item C<FUNCTION_NAME>
-
-Lambda function name. Default: C<lambda-handler>
-
-=item C<ROLE_NAME>
-
-IAM execution role name. Default: C<lambda-role>
 
 =item C<PERL_LAMBDA>
 
@@ -384,26 +522,6 @@ AWS account ID. Resolved automatically via C<alr-helper get-account>
 if not set. Set it explicitly to avoid the STS call:
 
   export AWS_ACCOUNT=$(alr-helper get-account)
-
-=item C<TIMEOUT>
-
-Lambda function timeout in seconds. Default: C<30>
-
-=item C<QUEUE_NAME>
-
-SQS queue name. Default: C<lambda-runtime>
-
-=item C<BATCH_SIZE>
-
-SQS messages per invocation. Default: C<10>
-
-=item C<BUCKET_NAME>
-
-S3 bucket for C<make lambda-s3-trigger>. Default: C<my-bucket>
-
-=item C<S3_EVENT>
-
-S3 event type. Default: C<s3:ObjectCreated:*>
 
 =item C<RULE_NAME>
 
@@ -440,13 +558,22 @@ Lambda function code.
 
 Test the function with C<$(PAYLOAD)> and print the response.
 
-=item C<update-policies>
-
-Re-attach policies after editing the C<policies> file.
-
 =item C<clean>
 
 Remove local sentinel files. AWS resources are not affected.
+
+=item C<update-policies>
+
+Re-attach IAM policies to the execution role. If C<ROLE_PROFILE> is set
+(in C<lambda.env>/C<lambda.yaml>), attaches the policies listed for that
+profile in C<profiles.yml>; otherwise, attaches the policies listed in
+the C<policies> file.
+
+=item C<lambda-configuration>
+
+Updates the function's memory and timeout from C<lambda.env> (C<MEMORY>,
+C<TIMEOUT>) via C<UpdateFunctionConfiguration>. Useful for applying a
+configuration-only change without rebuilding the image.
 
 =back
 
@@ -457,7 +584,18 @@ Remove local sentinel files. AWS resources are not affected.
 =item C<lambda-sqs-trigger>
 
 Creates an SQS queue (C<QUEUE_NAME>) and attaches it as an event source.
-Requires C<AWSLambdaSQSQueueExecutionRole> in the C<policies> file.
+Requires C<AWSLambdaSQSQueueExecutionRole> in the C<policies> file. A
+component of C<lambda-sqs-pipeline>; run that instead unless you
+specifically need just the queue/event-source step.
+
+=item C<lambda-sqs-pipeline>
+
+Runs the full C<s3-sqs> trigger setup: creates the SQS queue and DLQ,
+configures the S3-to-SQS event source mapping, sets reserved concurrency
+(C<CONCURRENCY>), applies C<lambda-configuration> (C<MEMORY>/C<TIMEOUT>),
+and sets the event source mapping's C<FunctionResponseTypes> according to
+C<PARTIAL_BATCH_RESPONSE>. This is the target to run - or re-run after
+editing C<lambda.yaml>/C<lambda.env> - for C<s3-sqs> projects.
 
 =item C<lambda-s3-trigger>
 
@@ -498,7 +636,12 @@ C<image> - builds the Docker image.
 C<ecr-repo> - creates the ECR repository if it does not exist.
 C<deploy> - logs in to ECR and pushes the image using the image digest.
 C<lambda-role> - creates the IAM execution role if it does not exist.
-C<lambda-policies> - attaches all policies in the C<policies> file.
+C<lambda-policies> - attaches policies to the execution role, either from
+C<profiles.yml> (if C<ROLE_PROFILE> is set) or the C<policies> file.
+C<lambda-concurrency> - sets reserved concurrency (C<CONCURRENCY>) via
+C<PutFunctionConcurrency>.
+C<lambda-sqs-response-types> - sets the SQS event source mapping's
+C<FunctionResponseTypes> according to C<PARTIAL_BATCH_RESPONSE>.
 C<policy-document> - generates the IAM assume-role trust policy JSON.
 
 =head1 REQUIRED IAM PERMISSIONS

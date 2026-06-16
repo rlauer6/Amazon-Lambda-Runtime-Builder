@@ -1,3 +1,32 @@
+Mon Jun 15 14:51:00 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.2.0]:
+	* VERSION: bump
+	* release-notes.md: updated
+	* release-notes/release-notes-1.2.0.md: new
+	* buildspec.yml: +lambda-mapping.yml
+	* lib/Amazon/Lambda/Runtime/Builder.pm.in
+	- updated pod
+	(init)
+	- set $ENV{AWS_PROFILE} if we have a --profile
+	- try to generate lambda.env
+	(main)
+	- + check-env-file, generate-yaml
+	- abbreviations
+	* lib/Amazon/Lambda/Runtime/Builder/Helper.pm.in: +attach-policies-from-profile
+	* lib/Amazon/Lambda/Runtime/Builder/Role/CheckDeps.pm.in
+	- remove setting of AWS_PROFILE
+	* lib/Amazon/Lambda/Runtime/Builder/Role/IAM.pm.in
+	(cmd_attach_policies_from_profile): new
+	* share/Makefile.mk
+	- fix DIST_NAME to get name from env or cwd name
+	- attach policies from environment or file
+	(update_policies): update dependency
+	* share/sqs.mk
+	- use MEMORY, PARTIAL_BATCH_RESPONSE to update configuration
+	* share/lambda-mapping.yml: new
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Config.pm.in: new
+
 Mon Jun 15 08:35:22 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.1.1]:

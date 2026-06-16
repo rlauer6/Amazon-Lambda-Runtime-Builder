@@ -230,6 +230,7 @@ sub main {
 ########################################################################
   my %commands = (
     'add-permission'                => \&cmd_lambda_add_permission,
+    'attach-policies-from-profile'  => \&cmd_attach_policies_from_profile,
     'attach-policy'                 => \&cmd_iam_attach_role_policy,
     'check'                         => \&cmd_check,
     'create-assume-policy'          => \&cmd_create_assume_policy,

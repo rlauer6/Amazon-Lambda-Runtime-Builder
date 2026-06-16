@@ -21,9 +21,8 @@ TIMEOUT       ?= 30
 BUILDER_HOME  ?= $(shell echo $$(pwd))
 CACHE_DIR     := $(BUILDER_HOME)/.cache
 NO_ECHO       ?= @
-DIST_TARBALL  ?= $(shell ls $(BUILDER_HOME)/*.tar.gz 2>/dev/null | sort -V | tail -1)
-DIST_NAME     := $(shell tar --wildcards -xOf $(DIST_TARBALL) '*/META.json' 2>/dev/null | \
-                   perl -MJSON -0ne 'print decode_json($$_)->{name}' 2>/dev/null)
+DIST_NAME     ?= $(notdir $(CURDIR))
+DIST_TARBALL  ?= $(shell ls $(BUILDER_HOME)/$(DIST_NAME)-*.tar.gz 2>/dev/null | sort -V | tail -1)
 
 # Used when BUILDING Perl XS based modules that require additional
 # libraries (ex: libssl-dev, etc)
@@ -173,13 +172,21 @@ $(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
 
 POLICIES_FILE ?= policies
 
-$(CACHE_DIR)/lambda-policies: $(CACHE_DIR)/lambda-role $(POLICIES_FILE) | $(CACHE_DIR)
+ifeq ($(ROLE_PROFILE),)
+  ATTACH_POLICIES_CMD = alr-helper attach-policy $(ROLE_NAME) $(POLICIES_FILE)
+  POLICIES_PREREQ     = $(POLICIES_FILE)
+else
+  ATTACH_POLICIES_CMD = alr-helper attach-policies-from-profile $(ROLE_NAME) $(ROLE_PROFILE)
+  POLICIES_PREREQ     = lambda.env
+endif
+
+$(CACHE_DIR)/lambda-policies: $(CACHE_DIR)/lambda-role $(POLICIES_PREREQ) | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	policies=$$(mktemp); trap 'rm -f $$policies' EXIT; \
-	alr-helper attach-policy $(ROLE_NAME) $(POLICIES_FILE) > $$policies && cp $$policies $@ && chmod 444 $@
+	$(ATTACH_POLICIES_CMD) > $$policies && cp $$policies $@ && chmod 444 $@
 
 .PHONY: update-policies
-update-policies: $(POLICIES_FILE) ## re-attach IAM policies from policies file
+update-policies: $(POLICIES_PREREQ) ## re-attach IAM policies (from role.profile via lambda.env, or from policies file)
 	$(NO_ECHO)$(MAKE) $(CACHE_DIR)/lambda-policies
 
 ########################################################################

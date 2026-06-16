@@ -14,9 +14,6 @@ sub cmd_dep_check {
 
   my $dist_dir = $self->get_dist_dir;
 
-  local $ENV{AWS_PROFILE} = $self->get_profile
-    if $self->get_profile;
-
   my $iam_available = eval {
     require Amazon::API::IAM;
     require Amazon::API::STS;
