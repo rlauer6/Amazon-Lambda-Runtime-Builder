@@ -220,6 +220,17 @@ $(CACHE_DIR)/lambda-function: \
 	fi; \
 	echo "$$URI@$$DIGEST" > $@ && chmod 444 $@
 
+.PHONY: lambda-teardown
+lambda-teardown: ## deprovision Lambda and all trigger-type infrastructure
+ifeq ($(TRIGGER_TYPE),eventbridge)
+	$(MAKE) lambda-eventbridge-teardown
+else ifeq ($(TRIGGER_TYPE),s3-sqs)
+	$(MAKE) lambda-sqs-teardown
+else
+	$(error Unknown or unset TRIGGER_TYPE: '$(TRIGGER_TYPE)'. \
+	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge)
+endif
+
 ########################################################################
 # invoke Lambda function
 ########################################################################

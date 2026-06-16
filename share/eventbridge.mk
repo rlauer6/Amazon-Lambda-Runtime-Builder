@@ -62,3 +62,14 @@ delete-eventbridge-rule: ## remove targets and delete EventBridge rule
 lambda-eventbridge-pipeline: \
     $(CACHE_DIR)/lambda-configuration \
     $(CACHE_DIR)/lambda-eventbridge-trigger ## full eventbridge infrastructure
+
+.PHONY: lambda-eventbridge-teardown
+lambda-eventbridge-teardown: ## deprovision full EventBridge stack
+	$(NO_ECHO)alr-helper disable-rule $(RULE_NAME); \
+	alr-helper remove-targets $(RULE_NAME) $(FUNCTION_NAME); \
+	alr-helper delete-rule $(RULE_NAME); \
+	alr-helper delete-function $(FUNCTION_NAME); \
+	alr-helper detach-all-policies $(ROLE_NAME); \
+	alr-helper delete-role $(ROLE_NAME); \
+	alr-helper delete-repo $(REPO_NAME); \
+	$(MAKE) clean

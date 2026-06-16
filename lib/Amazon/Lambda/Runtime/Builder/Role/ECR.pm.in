@@ -71,6 +71,48 @@ sub cmd_ecr_get_lifecycle_policy {
 }
 
 ########################################################################
+sub _delete_repository_policy {
+########################################################################
+  my ( $self, $repo_name ) = @_;
+
+  my $ecr = $self->_ecr;
+
+  my $rsp = eval { $ecr->DeleteRepositoryPolicy( { repositoryName => $repo_name } ); };
+
+  return $rsp;
+}
+
+########################################################################
+sub cmd_ecr_delete_repository_policy {
+########################################################################
+  my ($self) = @_;
+
+  my ($repo_name) = $self->get_args;
+
+  die "ERROR: usage: alr-helper delete-repo-policy repo-name\n"
+    if !$repo_name;
+
+  return $self->_delete_repository_policy($repo_name);
+}
+
+########################################################################
+sub cmd_ecr_delete_repository {
+########################################################################
+  my ($self) = @_;
+
+  my ($repo_name) = $self->get_args;
+
+  die "ERROR: usage: alr-helper delete-repo repo-name\n"
+    if !$repo_name;
+
+  my $ecr = $self->_ecr;
+
+  my $rsp = eval { return $ecr->DeleteRepository( { force => $TRUE, repositoryName => $repo_name } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
 sub cmd_ecr_put_lifecycle_policy {
 ########################################################################
   my ($self) = @_;

@@ -46,6 +46,49 @@ sub _detach_role_policy {
 }
 
 ########################################################################
+sub cmd_iam_delete_role {
+########################################################################
+  my ($self) = @_;
+
+  my ($role_name) = $self->get_args;
+
+  die "ERROR: usage: alr-helper delete-role role-name\n"
+    if !$role_name;
+
+  my $iam = $self->_iam;
+
+  my $rsp = eval { $iam->DeleteRole( { RoleName => $role_name } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_iam_detach_all_policies {
+########################################################################
+  my ($self) = @_;
+
+  my ($role_name) = $self->get_args;
+
+  die "ERROR: usage: alr-helper detach-all-policies role-name\n"
+    if !$role_name;
+
+  my $rsp = eval { $self->_list_attached_policies($role_name); };
+
+  return $self->_handle_response($rsp)
+    if !$rsp;
+
+  my @attached_policies = @{ $rsp->{AttachedPolicies} // [] };
+
+  eval {
+    foreach (@attached_policies) {
+      $self->_detach_policy( role_name => $role_name, policy_arn => $_->{PolicyArn} );
+    }
+  };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
 sub _policy_arn {
 ########################################################################
   my ( $self, $policy_name_or_arn ) = @_;
@@ -244,18 +287,9 @@ sub cmd_iam_get_role {
       require URI::Escape;
       $rsp->{Role}{AssumeRolePolicyDocument} = decode_json( URI::Escape::uri_unescape($doc) );
     }
-
-    print {*STDOUT} JSON->new->pretty->encode($rsp);
-
-    return $SUCCESS;
   }
 
-  if ($EVAL_ERROR) {
-    print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
-  }
-
-  return $SUCCESS;
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -265,10 +299,19 @@ sub cmd_iam_list_attached_policies {
 
   my ($role_name) = $self->get_args;
 
-  my $iam = $self->_iam;
-  my $rsp = eval { $iam->ListAttachedRolePolicies( { RoleName => $role_name } ); };
+  my $rsp = eval { $self->_list_attached_policies($role_name); };
 
   return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub _list_attached_policies {
+########################################################################
+  my ( $self, $role_name ) = @_;
+
+  my $iam = $self->_iam;
+
+  return $iam->ListAttachedRolePolicies( { RoleName => $role_name } );
 }
 
 1;

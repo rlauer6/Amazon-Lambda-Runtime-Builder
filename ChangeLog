@@ -1,3 +1,39 @@
+Tue Jun 16 15:39:15 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.2.2]:
+	* VERSION: bump
+	* release-notes.md: updated
+	* release-notes/release-notes-1.2.2.md: new
+	* lib/Amazon/Lambda/Runtime/Builder/Helper.pm.in
+	- +delete-queue, delete-repo, delete-role, delete-repo-policy, detatch-all-policies 
+	- +remove-bucket-notification
+	* lib/Amazon/Lambda/Runtime/Builder/Role/ECR.pm.in
+	(_delete_repository_policy): new
+	(cmd_ecr_delete_repository_policy): new
+	(cmd_ecr_delete_repository): new
+	* lib/Amazon/Lambda/Runtime/Builder/Role/IAM.pm.in
+	(cmd_iam_delete_role): new
+	(cmd_iam_detach_all_policies): new
+	(cmd_iam_get_role): refactored
+	(_list_attached_policies): new
+	(cmd_list_attached_policies): refactored
+	* lib/Amazon/Lambda/Runtime/Builder/Role/S3.pm.in
+	(cmd_s3_remove_bucket_notification_configuration): new
+	* lib/Amazon/Lambda/Runtime/Builder/Role/SQS.pm.in
+	(cmd_sqs_delete_queue): new
+	(cmd_purge_queue): => cmd_sqs_purge_queue
+	* share/Makefile.mk
+	(lambda_teardown): new
+	* share/builder.mk
+	- +lambda-teardown, lambda-sqs-teardown, lambda-evenbridge-teardown
+	* share/eventbridge.mk
+	(lambda-eventbridge-teardown): new
+	* share/lambda-mapping.yml
+	(version): bump
+	(trigger-type): new
+	* share/sqs.mk
+	(lambda-sqs-teardown): new
+
 Tue Jun 16 14:09:00 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.2.1]:

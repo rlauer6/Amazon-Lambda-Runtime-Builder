@@ -27,3 +27,12 @@ disable-eventbridge-rule:
 
 delete-eventbridge-rule:
 	$(MAKE) -f $(ALR_BUILDER) delete-eventbridge-rule
+
+lambda-teardown:
+	$(MAKE) -f $(ALR_BUILDER) lambda-teardown
+
+lambda-sqs-teardown:
+	$(MAKE) -f $(ALR_BUILDER) lambda-sqs-teardown
+
+lambda-eventbridge-teardown:
+	$(MAKE) -f $(ALR_BUILDER) lambda-eventbridge-teardown

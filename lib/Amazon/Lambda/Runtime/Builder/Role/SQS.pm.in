@@ -120,7 +120,7 @@ sub _queue_url {
 }
 
 ########################################################################
-sub cmd_purge_queue {
+sub cmd_sqs_purge_queue {
 ########################################################################
   my ($self) = @_;
 
@@ -131,6 +131,22 @@ sub cmd_purge_queue {
   my $queue_url = $self->_queue_url($queue_name);
 
   my $rsp = eval { return $sqs->PurgeQueue( { QueueUrl => $queue_url } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_sqs_delete_queue {
+########################################################################
+  my ($self) = @_;
+
+  my ($queue_name) = $self->get_args;
+
+  my $sqs = $self->_sqs;
+
+  my $queue_url = $self->_queue_url($queue_name);
+
+  my $rsp = eval { return $sqs->DeleteQueue( { QueueUrl => $queue_url } ); };
 
   return $self->_handle_response($rsp);
 }

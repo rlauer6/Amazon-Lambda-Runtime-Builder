@@ -125,15 +125,21 @@ sub cmd_s3_put_bucket_notification_configuration {
 
   my $rsp = eval { $s3->put_bucket_notification_configuration( $bucket_name, %options, type => $type ); };
 
-  if ( !$rsp && $EVAL_ERROR ) {
-    print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
-  }
-  elsif ($rsp) {
-    print {*STDOUT} JSON->new->pretty->encode($rsp);
-  }
+  return $self->_handle_response($rsp);
+}
 
-  return $SUCCESS;
+########################################################################
+sub cmd_s3_remove_bucket_notification_configuration {
+########################################################################
+  my ($self) = @_;
+
+  my $s3 = $self->_s3;
+
+  my ($bucket_name) = $self->get_args;
+
+  my $rsp = eval { $s3->remove_bucket_notification_configuration($bucket_name); };
+
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################

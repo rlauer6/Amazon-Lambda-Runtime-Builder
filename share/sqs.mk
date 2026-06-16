@@ -143,3 +143,15 @@ $(CACHE_DIR)/lambda-sqs-response-types: $(CACHE_DIR)/lambda-sqs-trigger lambda.e
 	uuid=$$(alr-helper list-event-source-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | \
 	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}'); \
 	alr-helper update-event-source-mapping uuid:$$uuid $(RESPONSE_TYPES_ARG) > $@ && chmod 444 $@
+
+.PHONY: lambda-sqs-teardown
+lambda-sqs-teardown: ## deprovision full s3-sqs stack
+	$(NO_ECHO)alr-helper remove-bucket-notification $(BUCKET_NAME) $(QUEUE_NAME); \
+	alr-helper delete-event-source-mappings $(FUNCTION_NAME); \
+	alr-helper delete-queue $(QUEUE_NAME); \
+	alr-helper delete-queue $(DLQ_NAME); \
+	alr-helper delete-function $(FUNCTION_NAME); \
+	alr-helper detach-all-policies $(ROLE_NAME); \
+	alr-helper delete-role $(ROLE_NAME); \
+	alr-helper delete-repo $(REPO_NAME); \
+	$(MAKE) clean
