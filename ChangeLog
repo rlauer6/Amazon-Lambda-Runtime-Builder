@@ -1,7 +1,21 @@
+Wed Jun 17 16:34:39 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.2.4]:
+	* VERSION: bump
+	* release-notes.md: updated
+	* release-notes/release-notes-1.2.4.md: new
+	* share/Makefile.mk
+	- hardening of recipes
+	- make sure sentinels are removed on failure
+	* share/builder.mk: likewise
+	* share/ecr-create-repo.mk: likewise
+	* share/eventbridge.mk: likewise
+	* share/sqs.mk: likewise
+
 Wed Jun 17 13:48:34 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.2.3]:
-	* VERSION: modified
+	* VERSION: bump
 	* release-notes.md: updated
 	* release-notes/release-notes-1.2.3.md: new
 	* lib/Amazon/Lambda/Runtime/Builderg/Helper.pm.in

@@ -17,9 +17,11 @@ $(CACHE_DIR)/lambda-eventbridge-rule: | $(CACHE_DIR) ## create EventBridge sched
 	    rule="$$(alr-helper put-rule-expression $(RULE_NAME) '$(SCHEDULE_EXPRESSION)' $(RULE_STATE))"; \
 	elif echo "$$rule" | grep -q 'error\|Error'; then \
 	    echo "ERROR: describe-rule failed: $$rule" >&2; \
-	    exit 1; \
+	    rm -f $@ && exit 1; \
 	fi; \
-	test -e $@ || echo "$$rule" > $@
+	test -z "$$rule" && { rm -f $@ && exit 1; }; \
+	echo "$$rule" > $@ || { rm -f $@ && exit 1; }; \
+	chmod 444 $@
 
 $(CACHE_DIR)/lambda-eventbridge-permission: $(CACHE_DIR)/lambda-function \
     $(CACHE_DIR)/lambda-eventbridge-rule | $(CACHE_DIR) ## grant EventBridge permission to invoke Lambda
@@ -38,7 +40,9 @@ $(CACHE_DIR)/lambda-eventbridge-permission: $(CACHE_DIR)/lambda-function \
 
 $(CACHE_DIR)/lambda-eventbridge-trigger: $(CACHE_DIR)/lambda-eventbridge-permission | $(CACHE_DIR) ## add Lambda as EventBridge rule target
 	$(NO_ECHO)trigger="$$(alr-helper put-lambda-target $(FUNCTION_NAME) $(RULE_NAME))"; \
-	test -e $@ || echo "$$trigger" > $@; \
+	test -z "$$trigger" && { rm -f $@ && exit 1; }; \
+	echo "$$trigger" > $@ || { rm -f $@ && exit 1; }; \
+	chmod 444 $@; \
 	echo "$(RULE_NAME) running...$(SCHEDULE_EXPRESSION). To delete rule:"; \
 	echo "make delete-eventbridge-rule"
 

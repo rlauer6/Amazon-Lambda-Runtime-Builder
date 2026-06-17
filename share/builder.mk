@@ -10,7 +10,7 @@ deploy: $(TARBALL)
 lambda-function:
 	$(MAKE) -f $(ALR_BUILDER) lambda-function
 
-update-function: deploy
+update-function: lambda-function
 	$(MAKE) -f $(ALR_BUILDER) update-function
 
 lambda-sqs-pipeline:

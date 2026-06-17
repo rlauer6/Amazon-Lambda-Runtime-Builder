@@ -32,9 +32,9 @@ $(CACHE_DIR)/sqs-queue-redrive: $(CACHE_DIR)/sqs-queue $(CACHE_DIR)/sqs-dlq | $(
 	    alr-helper set-queue-redrive-policy \
 	        $(QUEUE_NAME) \
 	        $(DLQ_NAME) \
-	        $(RECEIVE_COUNT); \
+	        $(RECEIVE_COUNT) || exit 1; \
 	fi; \
-	test -e $@ || echo "$(QUEUE_NAME)" > $@
+	echo "$(QUEUE_NAME)" > $@ && chmod 444 $@ || rm -f $@
 
 $(CACHE_DIR)/sqs-dlq: | $(CACHE_DIR) ## create dead letter queue
 	$(NO_ECHO)queue="$$(alr-helper list-queues | \
@@ -47,7 +47,11 @@ $(CACHE_DIR)/sqs-dlq: | $(CACHE_DIR) ## create dead letter queue
 	        retention:$(DLQ_RETENTION); \
 	    queue="$(DLQ_NAME)"; \
 	fi; \
-	test -e $@ || echo "$$queue" > $@
+	if [[ -z "$$queue" ]]; then \
+	  echo "ERROR: could not create/find queue $(DLQ_NAME)" >&2; exit 1; \
+	fi; \
+	echo "$$queue" > $@ || { rm -f $@ && exit 1; }; \
+	chmod 444 $@
 
 $(CACHE_DIR)/sqs-queue: $(CACHE_DIR)/sqs-dlq | $(CACHE_DIR) ## create SQS queue with visibility timeout and redrive policy
 	$(NO_ECHO)queue="$$(alr-helper list-queues | \
@@ -60,21 +64,23 @@ $(CACHE_DIR)/sqs-queue: $(CACHE_DIR)/sqs-dlq | $(CACHE_DIR) ## create SQS queue 
 	        retention:$(RETENTION) \
 	        timeout:$(VISIBILITY_TIMEOUT) \
 	        receive_count:$(RECEIVE_COUNT) \
-	        dlq:$(DLQ_NAME); \
-	    queue="$(QUEUE_NAME)"; \
+	        dlq:$(DLQ_NAME) || { rm -f $@ && exit 1; }; \
+	   queue=$(QUEUE_NAME); \
 	fi; \
-	test -e $@ || echo "$$queue" > $@
+	echo "$$queue" > $@ || { rm -f $@ && exit 1; }; \
+	chmod 444 $@
 
 $(CACHE_DIR)/sqs-queue-policy: $(CACHE_DIR)/sqs-queue | $(CACHE_DIR) ## grant S3 permission to send messages to the queue
 	$(NO_ECHO)alr-helper set-queue-bucket-policy \
 	    $(QUEUE_NAME) \
-	    $(BUCKET_NAME); \
-	test -e $@ || echo "$(QUEUE_NAME)" > $@
+	    $(BUCKET_NAME) || exit 1; \
+	echo "$(QUEUE_NAME)" > $@ || { rm -f $@ && exit 1; }; \
+	chmod 444 $@
 
 $(CACHE_DIR)/lambda-concurrency: $(CACHE_DIR)/lambda-function | $(CACHE_DIR) ## set Lambda reserved concurrency to 1 for serial indexing
-	$(NO_ECHO)alr-helper put-function-concurrency \
-	    $(FUNCTION_NAME) $(CONCURRENCY); \
-	test -e $@ || echo "$(FUNCTION_NAME)" > $@
+	$(NO_ECHO)alr-helper put-function-concurrency $(FUNCTION_NAME) $(CONCURRENCY) || exit 1; \
+	echo "$(FUNCTION_NAME)" > $@ || { rm -f $@ && exit 1; }; \
+	chmod 444 $@
 
 $(CACHE_DIR)/lambda-sqs-trigger: \
     $(CACHE_DIR)/lambda-function \
@@ -90,15 +96,18 @@ $(CACHE_DIR)/lambda-sqs-trigger: \
 	    $(FUNCTION_NAME) queue:$(QUEUE_NAME) \
 	    batch-size:$(BATCH_SIZE))"; \
 	fi; \
-	test -e $@ || echo "$$trigger" > $@
+	test -z "$$trigger" && rm -f $@ && exit 1; \
+	echo "$$trigger" > $@ || { rm -f $@ && exit 1; }; \
+	chmod 444 $@
 
 $(CACHE_DIR)/lambda-s3-sqs-trigger: $(CACHE_DIR)/sqs-queue-policy | $(CACHE_DIR) ## update S3 bucket notification to deliver to SQS
 	$(NO_ECHO)alr-helper put-bucket-notification \
 	    $(BUCKET_NAME) \
 	    sqs:$(QUEUE_NAME) \
 	    event:$(S3_EVENT) \
-	    name:prefix,value:$(KEY_PREFIX); \
-	test -e $@ || echo "$(QUEUE_NAME)" > $@
+	    name:prefix,value:$(KEY_PREFIX) || exit 1; \
+	echo "$(QUEUE_NAME)" > $@ || { rm -f $@ && exit 1; }; \
+	chmod 444 $@
 
 .PHONY: lambda-sqs-pipeline
 lambda-sqs-pipeline: \
@@ -117,9 +126,10 @@ $(CACHE_DIR)/lambda-sqs-permission: $(CACHE_DIR)/lambda-function $(CACHE_DIR)/sq
 	        sqs-trigger-$(QUEUE_NAME) \
 	        lambda:InvokeFunction \
 	        sqs.amazonaws.com \
-	        arn:aws:sqs:$(REGION):$(AWS_ACCOUNT):$(QUEUE_NAME); \
+	        arn:aws:sqs:$(REGION):$(AWS_ACCOUNT):$(QUEUE_NAME) || { rm -f $@ && exit 1; }; \
 	fi; \
-	test -e $@ || echo "$(QUEUE_NAME)" > $@
+	test -e $@ || echo "$(QUEUE_NAME)" > $@ || { rm -f $@ && exit 1; }; \
+	chmod 444 $@ 
 
 PARTIAL_BATCH_RESPONSE ?= false
 
@@ -133,7 +143,11 @@ $(CACHE_DIR)/lambda-sqs-response-types: $(CACHE_DIR)/lambda-sqs-trigger lambda.e
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	uuid=$$(alr-helper list-event-source-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | \
 	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}'); \
-	alr-helper update-event-source-mapping uuid:$$uuid $(RESPONSE_TYPES_ARG) > $@ && chmod 444 $@
+	alr-helper wait-event-source-mapping-enabled $$uuid; \
+	rsp="$$(alr-helper update-event-source-mapping uuid:$$uuid $(RESPONSE_TYPES_ARG)"; \
+	test -z "$$rsp" || { rm -f > $@ && exit 1; }; \
+	echo "$$rsp" > $@ || { rm -f > $@ && exit 1; }; \
+	chmod 444 $@
 
 .PHONY: lambda-sqs-teardown
 lambda-sqs-teardown: _lambda-sqs-teardown clean ## deprovision full s3-sqs stack

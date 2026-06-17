@@ -160,7 +160,7 @@ export s_create_assume_policy = $(value create_assume_role_policy)
 ########################################################################
 
 $(CACHE_DIR)/policy-document: | $(CACHE_DIR)
-	$(NO_ECHO)alr-helper create-assume-policy lambda.amazonaws.com > $@ && chmod 444 $@
+	$(NO_ECHO)alr-helper create-assume-policy lambda.amazonaws.com > $@ && chmod 444 $@ || rm -f $@
 
 $(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
@@ -188,7 +188,7 @@ endif
 $(CACHE_DIR)/lambda-policies: $(CACHE_DIR)/lambda-role $(POLICIES_PREREQ) | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	policies=$$(mktemp); trap 'rm -f $$policies' EXIT; \
-	$(ATTACH_POLICIES_CMD) > $$policies && cp $$policies $@ && chmod 444 $@
+	$(ATTACH_POLICIES_CMD) > $$policies && cp $$policies $@ && chmod 444 $@ || rm -f $@
 
 .PHONY: update-policies
 update-policies: $(POLICIES_PREREQ) ## re-attach IAM policies (from role.profile via lambda.env, or from policies file)
@@ -201,7 +201,7 @@ update-policies: $(POLICIES_PREREQ) ## re-attach IAM policies (from role.profile
 $(CACHE_DIR)/image-digest: $(CACHE_DIR)/deploy | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	alr-helper describe-images $(REPO_NAME) | \
-	  perl -MJSON -0ne 'print decode_json($$_)->{imageDigest}' > $@ && chmod 444 $@
+	  perl -MJSON -0ne 'print decode_json($$_)->{imageDigest}' > $@ && chmod 444 $@ || rm -f $@
 
 $(CACHE_DIR)/lambda-function: \
     $(CACHE_DIR)/image-digest \
@@ -219,7 +219,7 @@ $(CACHE_DIR)/lambda-function: \
 	else \
 	  alr-helper update-function $(FUNCTION_NAME) $$URI $$DIGEST; \
 	fi; \
-	echo "$$URI@$$DIGEST" > $@ && chmod 444 $@
+	echo "$$URI@$$DIGEST" > $@ && chmod 444 $@ || rm -f $@
 
 MEMORY ?= 128
 
