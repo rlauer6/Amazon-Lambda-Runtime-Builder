@@ -164,7 +164,8 @@ sub _walk_mapping {
 ########################################################################
   my ( $self, $provided ) = @_;
 
-  my $mapping_doc  = $self->_load_mapping;
+  my $mapping_doc = $self->_load_mapping;
+
   my $trigger_type = $mapping_doc->{trigger_types}[0];
 
   my ( @missing, @defaulted, @customized );
@@ -208,6 +209,29 @@ sub _walk_mapping {
     customized   => \@customized,
   };
 }
+
+########################################################################
+sub _validate_constraints {
+########################################################################
+  my ( $self, $provided ) = @_;
+
+  my @warnings;
+
+  if ( ( $provided->{TRIGGER_TYPE} // q{} ) eq 's3-sqs' ) {
+    my $timeout    = $provided->{TIMEOUT}            // 0;
+    my $visibility = $provided->{VISIBILITY_TIMEOUT} // 0;
+
+    if ( $visibility < $timeout * 6 ) {
+      push @warnings,
+        sprintf 'VISIBILITY_TIMEOUT (%d) should be at least 6x TIMEOUT (%d) - recommended minimum is %d seconds',
+        $visibility, $timeout, $timeout * 6;
+    }
+
+  }
+
+  return @warnings;
+}
+
 ########################################################################
 sub cmd_generate_yaml {
 ########################################################################
@@ -276,6 +300,16 @@ sub cmd_check {
   my %provided = $self->_read_lambda_env;
 
   my $result = $self->_walk_mapping( \%provided );
+
+  my @warnings = $self->_validate_constraints( \%provided );
+
+  if (@warnings) {
+    print {*STDOUT} "Constraint violations:\n";
+    foreach (@warnings) {
+      printf {*STDOUT} "  %s\n", $_;
+    }
+    print {*STDOUT} "\n";
+  }
 
   if ( @{ $result->{missing} } ) {
     print {*STDOUT} "MISSING (required):\n";

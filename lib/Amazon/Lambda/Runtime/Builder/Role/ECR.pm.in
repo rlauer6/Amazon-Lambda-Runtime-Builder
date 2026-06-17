@@ -122,7 +122,7 @@ sub cmd_ecr_put_lifecycle_policy {
   $count_number //= 1;
 
   my $lifecycle_policy = {
-    rule => [
+    rules => [
       { rulePriority => 1,
         selection    => {
           tagStatus   => 'untagged',

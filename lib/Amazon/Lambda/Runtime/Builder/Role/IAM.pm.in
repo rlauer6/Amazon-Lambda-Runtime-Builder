@@ -81,7 +81,7 @@ sub cmd_iam_detach_all_policies {
 
   eval {
     foreach (@attached_policies) {
-      $self->_detach_policy( role_name => $role_name, policy_arn => $_->{PolicyArn} );
+      $self->_detach_role_policy( role_name => $role_name, policy_arn => $_->{PolicyArn} );
     }
   };
 

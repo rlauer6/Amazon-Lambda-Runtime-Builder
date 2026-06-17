@@ -54,8 +54,8 @@ enable-eventbridge-rule: ## enable EventBridge rule
 
 .PHONY: delete-eventbridge-rule
 delete-eventbridge-rule: ## remove targets and delete EventBridge rule
-	$(NO_ECHO)alr-helper remove-targets $(RULE_NAME) $(FUNCTION_NAME); \
-	alr-helper delete-rule $(RULE_NAME); \
+	$(NO_ECHO)alr-helper remove-targets $(RULE_NAME) $(FUNCTION_NAME) || true; \
+	alr-helper delete-rule $(RULE_NAME) || true ;  \
 	rm -f $(CACHE_DIR)/lambda-eventbridge-rule $(CACHE_DIR)/lambda-eventbridge-permission $(CACHE_DIR)/lambda-eventbridge-trigger
 
 .PHONY: lambda-eventbridge-pipeline
@@ -64,12 +64,14 @@ lambda-eventbridge-pipeline: \
     $(CACHE_DIR)/lambda-eventbridge-trigger ## full eventbridge infrastructure
 
 .PHONY: lambda-eventbridge-teardown
-lambda-eventbridge-teardown: ## deprovision full EventBridge stack
-	$(NO_ECHO)alr-helper disable-rule $(RULE_NAME); \
-	alr-helper remove-targets $(RULE_NAME) $(FUNCTION_NAME); \
-	alr-helper delete-rule $(RULE_NAME); \
-	alr-helper delete-function $(FUNCTION_NAME); \
-	alr-helper detach-all-policies $(ROLE_NAME); \
-	alr-helper delete-role $(ROLE_NAME); \
-	alr-helper delete-repo $(REPO_NAME); \
-	$(MAKE) clean
+lambda-eventbridge-teardown: _lambda-eventbridge-teardown clean ## deprovision full EventBridge stack
+
+.PHONY: _lambda-eventbridge-teardown
+_lambda-eventbridge-teardown: ## deprovision full EventBridge stack
+	$(NO_ECHO)alr-helper disable-rule $(RULE_NAME) || true; \
+	alr-helper remove-targets $(RULE_NAME) $(FUNCTION_NAME) || true; \
+	alr-helper delete-rule $(RULE_NAME) || true; \
+	alr-helper delete-function $(FUNCTION_NAME) || true; \
+	alr-helper detach-all-policies $(ROLE_NAME) || true; \
+	alr-helper delete-role $(ROLE_NAME) || true; \
+	alr-helper delete-repo $(REPO_NAME) || true

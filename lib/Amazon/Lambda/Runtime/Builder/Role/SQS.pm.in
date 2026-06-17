@@ -264,7 +264,7 @@ sub _sqs_get_queue_attributes {
     AttributeNames => [@attribute_names],
   };
 
-  return eval { $sqs->GetQueueAttributes($args); };
+  return $sqs->GetQueueAttributes($args);
 }
 
 ########################################################################

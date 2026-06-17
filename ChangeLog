@@ -1,3 +1,43 @@
+Wed Jun 17 13:48:34 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.2.3]:
+	* VERSION: modified
+	* release-notes.md: updated
+	* release-notes/release-notes-1.2.3.md: new
+	* lib/Amazon/Lambda/Runtime/Builderg/Helper.pm.in
+	- +wait-eventsource-mapping-enabled
+	(main): capture exit code
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Config.pm.in
+	(_validate_constraints): new
+	(cmd_check): call above
+	* lib/Amazon/Lambda/Runtime/Builder/Role/ECR.pm.in
+	(cmd_ecr_put_lifecycle_policy): rules, not rule
+	* lib/Amazon/Lambda/Runtime/Builder/Role/IAM.pm.in
+	(cmd_iam_detach_all_policies): _detach_role_policy, not _detach_policy
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Lambda.pm.in
+	(cmd_lambda_wait_eventsource_mapping_enabled): new
+	(_lambda_wait_eventsource_mapping_enabled): new
+	* lib/Amazon/Lambda/Runtime/Builder/Role/S3.pm.in
+	(cmd_s3_remove_bucket_notification_configuration)
+	- eval {}
+	- _handle_response()
+	* lib/Amazon/Lambda/Runtime/Builder/Role/SQS.pm.in
+	(_sqs_get_queue_attributes): don't eval here
+	* share/Makefile.mk
+	- strip trailing whitespace form key env vars
+	(lambda-configuration) new (moved)
+	(update-lambda-configuration): new (moved)
+	(lambda-pipeline): new
+	* share/builder.mk
+	(lambda-pipeline): new
+	(update-lambda-configuration): new
+	* share/eventbridge.mk
+	(delete-eventbridge-rule): || true
+	(lambda-eventbridge-teardown): likewise, split recipe
+	* share/sqs.mk
+	(lambda-configuration): moved to Makefile.mk
+	(lambda-sqs-teardown): || true
+
 Tue Jun 16 15:39:15 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.2.2]:

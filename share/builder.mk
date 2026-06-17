@@ -36,3 +36,9 @@ lambda-sqs-teardown:
 
 lambda-eventbridge-teardown:
 	$(MAKE) -f $(ALR_BUILDER) lambda-eventbridge-teardown
+
+lambda-pipeline:
+	$(MAKE) -f $(ALR_BUILDER) lambda-pipeline
+
+update-lambda-configuration:
+	$(MAKE) -f $(ALR_BUILDER) update-lambda-configuration

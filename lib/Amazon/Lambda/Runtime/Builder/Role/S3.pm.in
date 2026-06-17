@@ -137,9 +137,9 @@ sub cmd_s3_remove_bucket_notification_configuration {
 
   my ($bucket_name) = $self->get_args;
 
-  my $rsp = eval { $s3->remove_bucket_notification_configuration($bucket_name); };
+  my $rv = $s3->remove_bucket_notification_configuration($bucket_name);
 
-  return $self->_handle_response($rsp);
+  return $rv ? $SUCCESS : $FAILURE;
 }
 
 ########################################################################

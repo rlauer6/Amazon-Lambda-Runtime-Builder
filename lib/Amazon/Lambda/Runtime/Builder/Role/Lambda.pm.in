@@ -127,6 +127,46 @@ sub _wait_function_active {
 }
 
 ########################################################################
+sub cmd_lambda_wait_eventsource_mapping_enabled {
+########################################################################
+  my ($self) = @_;
+
+  my ($uuid) = $self->get_args;
+
+  return $self->_wait_eventsource_mapping_enabled($uuid);
+}
+
+########################################################################
+sub _wait_eventsource_mapping_enabled {
+########################################################################
+  my ( $self, $uuid, $lambda ) = @_;
+
+  $lambda //= $self->_lambda;
+  eval {
+    local $SIG{ALRM} = sub { die "timed out\n"; };
+
+    if ( $self->get_wait ) {
+      alarm $self->get_wait;
+    }
+
+    while ( $TRUE && $self->get_wait ) {
+      my $rsp = $lambda->GetEventSourceMapping( { UUID => $uuid } );
+      last if $rsp->{State} eq 'Enabled';
+      sleep 1;
+    }
+
+    alarm 0;
+  };
+
+  if ($EVAL_ERROR) {
+    print {*STDERR} "timed out waiting for function to be come activated\n";
+    return $FAILURE;
+  }
+
+  return $SUCCESS;
+}
+
+########################################################################
 sub cmd_lambda_update_function_configuration {
 ########################################################################
   my ($self) = @_;
@@ -282,6 +322,7 @@ sub _resolve_arn {
     if $arn_or_name =~ /^arn:/xsm;
 
   my ( $type, $name ) = split /[:]/xsm, $arn_or_name;
+
   if ( !$name ) {
     $name = $type;  # default = queue
   }
@@ -289,7 +330,9 @@ sub _resolve_arn {
     die "ERROR: only type 'queue' is currently supported\n";
   }
 
-  return $self->_sqs_get_queue_arn($name);
+  my $arn = $self->_sqs_get_queue_arn($name);
+
+  return $arn;
 }
 
 ########################################################################

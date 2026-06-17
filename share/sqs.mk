@@ -87,8 +87,7 @@ $(CACHE_DIR)/lambda-sqs-trigger: \
 	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}')"; \
 	if [[ -z "$$trigger" || "$$trigger" = "None" ]]; then \
 	  trigger="$$(alr-helper create-event-source-mappings \
-	    $(FUNCTION_NAME) \
-	    queue:$(QUEUE_NAME) \
+	    $(FUNCTION_NAME) queue:$(QUEUE_NAME) \
 	    batch-size:$(BATCH_SIZE))"; \
 	fi; \
 	test -e $@ || echo "$$trigger" > $@
@@ -122,14 +121,6 @@ $(CACHE_DIR)/lambda-sqs-permission: $(CACHE_DIR)/lambda-function $(CACHE_DIR)/sq
 	fi; \
 	test -e $@ || echo "$(QUEUE_NAME)" > $@
 
-MEMORY ?= 128
-
-$(CACHE_DIR)/lambda-configuration: $(CACHE_DIR)/lambda-function lambda.env | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
-	alr-helper update-function-configuration $(FUNCTION_NAME) memory-size:$(MEMORY) timeout:$(TIMEOUT) > $@ && chmod 444 $@
-
-lambda-configuration: $(CACHE_DIR)/lambda-configuration ## update function memory/timeout from lambda.env
-
 PARTIAL_BATCH_RESPONSE ?= false
 
 ifeq ($(PARTIAL_BATCH_RESPONSE),true)
@@ -145,13 +136,19 @@ $(CACHE_DIR)/lambda-sqs-response-types: $(CACHE_DIR)/lambda-sqs-trigger lambda.e
 	alr-helper update-event-source-mapping uuid:$$uuid $(RESPONSE_TYPES_ARG) > $@ && chmod 444 $@
 
 .PHONY: lambda-sqs-teardown
-lambda-sqs-teardown: ## deprovision full s3-sqs stack
-	$(NO_ECHO)alr-helper remove-bucket-notification $(BUCKET_NAME) $(QUEUE_NAME); \
-	alr-helper delete-event-source-mappings $(FUNCTION_NAME); \
-	alr-helper delete-queue $(QUEUE_NAME); \
-	alr-helper delete-queue $(DLQ_NAME); \
-	alr-helper delete-function $(FUNCTION_NAME); \
-	alr-helper detach-all-policies $(ROLE_NAME); \
-	alr-helper delete-role $(ROLE_NAME); \
-	alr-helper delete-repo $(REPO_NAME); \
-	$(MAKE) clean
+lambda-sqs-teardown: _lambda-sqs-teardown clean ## deprovision full s3-sqs stack
+
+.PHONY: _lambda-sqs-teardown
+_lambda-sqs-teardown:
+	$(NO_ECHO)alr-helper remove-bucket-notification $(BUCKET_NAME) || true; \
+	uuid=$$(alr-helper list-event-source-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) 2>/dev/null | \
+	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}'); \
+	if [[ -n "$$uuid" ]]; then \
+	  alr-helper delete-event-source-mappings $$uuid || true; \
+	fi; \
+	alr-helper delete-queue $(QUEUE_NAME) || true; \
+	alr-helper delete-queue $(DLQ_NAME) || true; \
+	alr-helper delete-function $(FUNCTION_NAME) || true; \
+	alr-helper detach-all-policies $(ROLE_NAME) || true; \
+	alr-helper delete-role $(ROLE_NAME) || true; \
+	alr-helper delete-repo $(REPO_NAME) || true

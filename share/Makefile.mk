@@ -9,11 +9,12 @@ FRAMEWORK_DIR ?= $(shell perl -MFile::ShareDir=dist_dir -e 'print dist_dir("Amaz
 
 include $(FRAMEWORK_DIR)/help.mk
 
+REPO_NAME      := $(strip $(REPO_NAME))
+FUNCTION_NAME  := $(strip $(FUNCTION_NAME))
+ROLE_NAME      := $(strip $(ROLE_NAME))
+TRIGGER_TYPE   := $(strip $(TRIGGER_TYPE))
 AWS_PROFILE   ?= default
 REGION        ?= us-east-1
-REPO_NAME     ?= perl-lambda
-FUNCTION_NAME ?= lambda-handler
-ROLE_NAME     ?= lambda-role
 AWS_ACCOUNT   ?= $(shell alr-helper get-account)
 NOCACHE       ?=
 PAYLOAD       ?= payload-sns.json
@@ -219,6 +220,30 @@ $(CACHE_DIR)/lambda-function: \
 	  alr-helper update-function $(FUNCTION_NAME) $$URI $$DIGEST; \
 	fi; \
 	echo "$$URI@$$DIGEST" > $@ && chmod 444 $@
+
+MEMORY ?= 128
+
+$(CACHE_DIR)/lambda-configuration: $(CACHE_DIR)/lambda-function lambda.env | $(CACHE_DIR)
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	alr-helper update-function-configuration $(FUNCTION_NAME) memory-size:$(MEMORY) timeout:$(TIMEOUT) > $@ && chmod 444 $@
+
+lambda-configuration: $(CACHE_DIR)/lambda-configuration ## update function memory/timeout from lambda.env
+
+.PHONY: update-lambda-configuration
+update-lambda-configuration: ## force update of Lambda function configuration from lambda.env
+	$(NO_ECHO)rm -f $(CACHE_DIR)/lambda-configuration || true; \
+	$(MAKE) -f $(firstword $(MAKEFILE_LIST)) lambda-configuration
+
+.PHONY: lambda-pipeline
+lambda-pipeline: ## provision full Lambda infrastructure for trigger type
+ifeq ($(TRIGGER_TYPE),eventbridge)
+	$(MAKE) lambda-eventbridge-pipeline
+else ifeq ($(TRIGGER_TYPE),s3-sqs)
+	$(MAKE) lambda-sqs-pipeline
+else
+	$(error Unknown or unset TRIGGER_TYPE: '$(TRIGGER_TYPE)'. \
+	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge)
+endif
 
 .PHONY: lambda-teardown
 lambda-teardown: ## deprovision Lambda and all trigger-type infrastructure
