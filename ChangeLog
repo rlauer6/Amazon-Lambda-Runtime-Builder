@@ -1,3 +1,77 @@
+Thu Jun 18 16:37:17 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.2.5]:
+	* VERSION: bump
+	* release-notes.md: updated
+	* release-notes/release-notes-1.2.5.md: new
+	* lib/Amazon/Lambda/Runtime/Builder.pm.in
+	(init):
+	- set config_file from LAMBDA_ENV, LAMBDA_YAML or --config-file
+	(main)
+	- add --config-file option
+	- add lambda_env, lambda_yaml to extra_options
+	* lib/Amazon/Lambda/Runtime/Builder/Helper.pm.in
+	(init)
+	- set config_file from LAMBDA_ENV, LAMBDA_YAML or --config-file
+	(main)
+	- add --config-file option
+	- add lambda_env, lambda_yaml to extra_options
+	- default_options, wait => 60
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Config.pm.in
+	(_env_file): new
+	(_yaml_file): new
+	(_lambda_env_needs_regen)
+	- remove hardcoded lambda.env
+	(_generate_lambda_env): likewise hardcoded lambda.yaml
+	(cmd_generate_yaml): likewise
+	(_read_lambda_yaml): likewise
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Lambda.pm.in
+	(cmd_lambda_update_function_code)
+	- refactored so waits surround API call
+	(_wait_function_active)
+	- check LastUpdateStatus too
+	(cmd_lambda_update_function_configuration)
+	- refactored so waits surround API call
+	(cmd_lambda_invoke_function)
+	- refactored to wait for function to be active
+	(cmd_lambda_create_function)
+	- refactored by moving wait inside eval
+	(_lambda_get_function): remove eval {}
+	(cmd_lambda_get_function_configuration): refactored - _handle_response
+	(cmd_lambda_get_function): likewise
+	(cmd_lambda_get_policy): likewise
+	(cmd_lambda_list_event_source_mappings): likewise
+	(cmd_lambda_put_function_concurrency)
+	- refactored so waits surround API call
+	(cmd_lambda_create_function_url_config): refactored slighlty
+	* lib/Amazon/Lambda/Runtime/Builder/Role/S3.pm.in
+	(cmd_s3_list_buckets)
+	- accept bucket-name to verify
+	(cmd_s3_get_bucket_notification_configuration): refactored - _handle_response
+	* lib/Amazon/Lambda/Runtime/Builder/Role/SQS.pm.in
+	(cmd_sqs_set_queue_bucket_policy)
+	- use _handle_response to return correct exit code
+	* share/Makefile.mk
+	- remove hardcoded lambda.env
+	- (CACHE_DIR): add function name prefix
+	- add s3-direct TRIGGER_TYPE support
+	(CLEANFILES): add lambda-configuration, lambda-sqs-response-types
+	* share/builder.mk
+	- add lambda-s3-pipeline, lambda-s3-teardown targets
+	* share/lambda-mapping.yml
+	- add s3-direct
+	* share/s3.mk
+	- add $CREATE_BUCKET guard
+	(s3-bucket): check for bucket and error out unless $CREATE_BUCKET is true
+	(lambda-s3-permission): exit if add-permission fails
+	(lambda-s3-trigger): don't set prefix if no key prefix
+	(lambda-s3-pipeline): new
+	(lambda-s3-teardown): new
+	* share/sqs.mk
+	(lambda-sqs-trigger): wait for eventsource mapping enabled
+	(lambda-sqs-response-types): test -n "$$rsp"
+
+
 Wed Jun 17 16:34:39 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.2.4]:

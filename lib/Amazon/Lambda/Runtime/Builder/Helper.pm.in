@@ -222,6 +222,11 @@ sub init {
 
   $self->set_region($region);
 
+  my ($config) = grep { defined $_ } ( $self->get_config_file, @ENV{qw(LAMBDA_ENV LAMBDA_YAML)} );
+  $config //= 'lambda.env';
+
+  $self->set_config_file($config);
+
   return $self;
 }
 
@@ -236,13 +241,13 @@ sub main {
     'create-assume-policy'             => \&cmd_create_assume_policy,
     'create-bucket'                    => \&cmd_s3_create_bucket,
     'create-cpanfile'                  => \&cmd_create_cpanfile,
-    'create-event-source-mappings'     => \&cmd_lambda_create_event_source_mappings,
+    'create-eventsource-mappings'      => \&cmd_lambda_create_eventsource_mappings,
     'create-function'                  => \&cmd_lambda_create_function,
     'create-function-url-config'       => \&cmd_lambda_create_function_url_config,
     'create-queue'                     => \&cmd_sqs_create_queue,
     'create-repository'                => \&cmd_ecr_create_repository,
     'create-role'                      => \&cmd_iam_create_role,
-    'delete-event-source-mappings'     => \&cmd_lambda_delete_event_source_mappings,
+    'delete-eventsource-mappings'      => \&cmd_lambda_delete_eventsource_mappings,
     'delete-function'                  => \&cmd_lambda_delete_function,
     'delete-function-url-config'       => \&cmd_lambda_delete_function_url_config,
     'delete-queue'                     => \&cmd_sqs_delete_queue,
@@ -275,7 +280,7 @@ sub main {
     'invoke-function'                  => \&cmd_lambda_invoke_function,
     'list-attached-policies'           => \&cmd_iam_list_attached_policies,
     'list-buckets'                     => \&cmd_s3_list_buckets,
-    'list-event-source-mappings'       => \&cmd_lambda_list_event_source_mappings,
+    'list-eventsource-mappings'        => \&cmd_lambda_list_eventsource_mappings,
     'list-queues'                      => \&cmd_sqs_list_queues,
     'put-bucket-notification'          => \&cmd_s3_put_bucket_notification_configuration,
     'put-function-concurrency'         => \&cmd_lambda_put_function_concurrency,
@@ -289,7 +294,7 @@ sub main {
     'remove-permission'                => \&cmd_lambda_remove_permission,
     'set-queue-bucket-policy'          => \&cmd_sqs_set_queue_bucket_policy,
     'set-queue-redrive-policy'         => \&cmd_sqs_set_queue_redrive_policy,
-    'update-event-source-mapping'      => \&cmd_lambda_update_event_source_mapping,
+    'update-eventsource-mapping'       => \&cmd_lambda_update_eventsource_mapping,
     'update-function'                  => \&cmd_lambda_update_function_code,
     'update-function-configuration'    => \&cmd_lambda_update_function_configuration,
     'wait-eventsource-mapping-enabled' => \&cmd_lambda_wait_eventsource_mapping_enabled,
@@ -300,6 +305,7 @@ sub main {
     dryrun|d
     input|i=s
     localstack|L
+    config-file|c=s
     log-level|l=s
     output|o=s
     region|r=s
@@ -308,13 +314,14 @@ sub main {
     wait|w=i
   );
 
-  my $extra_options = [qw( tar dist_name )];
+  my $extra_options = [qw( tar dist_name lambda_env lambda_yaml )];
 
   my $cli = __PACKAGE__->new(
-    commands      => \%commands,
-    option_specs  => \@option_specs,
-    extra_options => $extra_options,
-    abbreviations => $TRUE,
+    commands        => \%commands,
+    option_specs    => \@option_specs,
+    extra_options   => $extra_options,
+    abbreviations   => $TRUE,
+    default_options => { wait => 60 },
   );
 
   my $exit_code = $cli->run;

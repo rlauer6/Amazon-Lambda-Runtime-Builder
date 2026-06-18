@@ -66,24 +66,21 @@ sub cmd_lambda_update_function_code {
 
   my $lambda = $self->_lambda;
 
-  $self->_wait_function_active( $function_name, $lambda );
+  my $rsp;
 
-  my $rsp = eval {
-    $lambda->UpdateFunctionCode(
+  eval {
+    $self->_wait_function_active( $function_name, $lambda );
+
+    $rsp = $lambda->UpdateFunctionCode(
       { FunctionName => $function_name,
         ImageUri     => sprintf( '%s@%s', $repo_name, $digest ),
       }
     );
+
+    $self->_wait_function_active( $function_name, $lambda );
   };
 
-  if ( !$rsp ) {
-    print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
-  }
-
-  print {*STDOUT} JSON->new->pretty->encode($rsp);
-
-  return $self->_wait_function_active( $function_name, $lambda );
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -102,6 +99,7 @@ sub _wait_function_active {
   my ( $self, $function_name, $lambda ) = @_;
 
   $lambda //= $self->_lambda;
+
   eval {
     local $SIG{ALRM} = sub { die "timed out\n"; };
 
@@ -111,7 +109,8 @@ sub _wait_function_active {
 
     while ( $TRUE && $self->get_wait ) {
       my $rsp = $lambda->GetFunction( { FunctionName => $function_name } );
-      last if $rsp->{State} eq 'Active';
+
+      last if $rsp->{Configuration}{State} eq 'Active' && $rsp->{Configuration}{LastUpdateStatus} ne 'InProgress';
       sleep 1;
     }
 
@@ -142,6 +141,7 @@ sub _wait_eventsource_mapping_enabled {
   my ( $self, $uuid, $lambda ) = @_;
 
   $lambda //= $self->_lambda;
+
   eval {
     local $SIG{ALRM} = sub { die "timed out\n"; };
 
@@ -180,16 +180,15 @@ sub cmd_lambda_update_function_configuration {
 
   my $configuration = $self->_parse_params(@params);
 
-  my $rsp = eval { $lambda->UpdateFunctionConfiguration( { FunctionName => $function_name, %{$configuration}, } ); };
+  my $rsp;
 
-  if ( !$rsp ) {
-    print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
-  }
+  eval {
+    $self->_wait_function_active( $function_name, $lambda );
+    $rsp = $lambda->UpdateFunctionConfiguration( { FunctionName => $function_name, %{$configuration}, } );
+    $self->_wait_function_active( $function_name, $lambda );
+  };
 
-  print {*STDOUT} JSON->new->pretty->encode($rsp);
-
-  return $SUCCESS;
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -201,12 +200,12 @@ sub cmd_lambda_invoke_function {
 
   my $lambda = $self->_lambda;
 
-  my $rsp = eval { $lambda->Invoke( { FunctionName => $function_name, Payload => slurp($payload), } ); };
+  my $rsp = eval {
+    $self->_wait_function_active( $function_name, $lambda );
+    return $lambda->Invoke( { FunctionName => $function_name, Payload => slurp($payload), } );
+  };
 
-  print {*STDOUT} $rsp ? JSON->new->pretty->encode($rsp) : $EVAL_ERROR;
-
-  return $rsp ? $SUCCESS : $FAILURE;
-
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -224,8 +223,10 @@ sub cmd_lambda_create_function {
 
   my $lambda = $self->_lambda;
 
-  my $rsp = eval {
-    $lambda->CreateFunction(
+  my $rsp;
+
+  eval {
+    $rsp = $lambda->CreateFunction(
       { FunctionName => $function_name,
         Timeout      => $timeout,
         Code         => { ImageUri => "$image:latest" },
@@ -233,6 +234,7 @@ sub cmd_lambda_create_function {
         PackageType  => 'Image',
       }
     );
+    $self->_wait_function_active( $function_name, $lambda );
   };
 
   return $self->_handle_response($rsp);
@@ -249,7 +251,7 @@ sub _lambda_get_function {
 
   my $lambda = $self->_lambda;
 
-  return eval { $lambda->GetFunction( { FunctionName => $function_name } ); };
+  return $lambda->GetFunction( { FunctionName => $function_name } );
 }
 
 ########################################################################
@@ -263,9 +265,7 @@ sub cmd_lambda_get_function_configuration {
 
   my $rsp = eval { $lambda->GetFunctionConfiguration( { FunctionName => $function_name } ); };
 
-  print {*STDOUT} $rsp ? JSON->new->pretty->encode($rsp) : $EVAL_ERROR;
-
-  return $SUCCESS;
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -291,9 +291,7 @@ sub cmd_lambda_get_function {
 
   my $rsp = eval { $self->_lambda_get_function($function_name); };
 
-  print {*STDOUT} $rsp ? JSON->new->pretty->encode($rsp) : $EVAL_ERROR;
-
-  return $SUCCESS;
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -305,9 +303,7 @@ sub cmd_lambda_get_policy {
 
   my $rsp = $self->_lambda_get_policy($function_name);
 
-  print {*STDOUT} $rsp ? JSON->new->pretty->encode($rsp) : $EVAL_ERROR;
-
-  return $SUCCESS;
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -336,7 +332,7 @@ sub _resolve_arn {
 }
 
 ########################################################################
-sub cmd_lambda_list_event_source_mappings {
+sub cmd_lambda_list_eventsource_mappings {
 ########################################################################
   my ($self) = @_;
 
@@ -346,28 +342,26 @@ sub cmd_lambda_list_event_source_mappings {
 
   my $lambda = $self->_lambda;
 
-  my $rsp
-    = eval { $lambda->ListEventSourceMappings( { FunctionName => $function_name, $arn ? ( EventSourceArn => $arn ) : (), } ); };
+  my $rsp;
 
-  if ( !$rsp && $EVAL_ERROR ) {
-    print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
-  }
+  eval {
+    $rsp = $lambda->ListEventSourceMappings(
+      { FunctionName => $function_name,
+        $arn ? ( EventSourceArn => $arn ) : (),
+      }
+    );
 
-  my $mappings = choose {
     return $rsp
       if !$uuid;
 
     return ( grep { $_->{UUID} eq $uuid } @{ $rsp->{EventSourceMappings} } );
   };
 
-  print {*STDOUT} JSON->new->pretty->encode($mappings);
-
-  return $SUCCESS;
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
-sub cmd_lambda_create_event_source_mappings {
+sub cmd_lambda_create_eventsource_mappings {
 ########################################################################
   my ($self) = @_;
 
@@ -380,13 +374,13 @@ sub cmd_lambda_create_event_source_mappings {
 
   my $lambda = $self->_lambda;
 
-  my $event_source_mappings = $self->_parse_params(@params);
+  my $eventsource_mappings = $self->_parse_params(@params);
 
   my $rsp = eval {
     return $lambda->CreateEventSourceMapping(
       { FunctionName   => $function_name,
         EventSourceArn => $arn,
-        %{$event_source_mappings},
+        %{$eventsource_mappings},
       }
     );
   };
@@ -403,12 +397,16 @@ sub cmd_lambda_put_function_concurrency {
 
   my $lambda = $self->_lambda;
 
-  my $rsp = eval {
-    return $lambda->PutFunctionConcurrency(
+  my $rsp;
+
+  eval {
+    $self->_wait_function_active( $function_name, $lambda );
+    $rsp = $lambda->PutFunctionConcurrency(
       { FunctionName                 => $function_name,
         ReservedConcurrentExecutions => $reserved_concurrent_executions // 1,
       }
     );
+    $self->_wait_function_active( $function_name, $lambda );
   };
 
   return $self->_handle_response($rsp);
@@ -443,7 +441,7 @@ sub cmd_lambda_delete_function {
 }
 
 ########################################################################
-sub cmd_lambda_delete_event_source_mappings {
+sub cmd_lambda_delete_eventsource_mappings {
 ########################################################################
   my ($self) = @_;
 
@@ -455,11 +453,12 @@ sub cmd_lambda_delete_event_source_mappings {
   my $lambda = $self->_lambda;
 
   my $rsp = eval { $lambda->DeleteEventSourceMapping( { UUID => $uuid } ); };
+
   return $self->_handle_response($rsp);
 }
 
 ########################################################################
-sub cmd_lambda_update_event_source_mapping {
+sub cmd_lambda_update_eventsource_mapping {
 #########################################################################
   my ($self) = @_;
 
@@ -467,14 +466,14 @@ sub cmd_lambda_update_event_source_mapping {
 
   my $lambda = $self->_lambda;
 
-  my $event_source_mappings = $self->_parse_params(@params);
+  my $eventsource_mappings = $self->_parse_params(@params);
 
-  $event_source_mappings->{UUID} = delete $event_source_mappings->{Uuid};
+  $eventsource_mappings->{UUID} = delete $eventsource_mappings->{Uuid};
 
   die "ERROR: uuid is a required parameter\n"
-    if !$event_source_mappings->{UUID};
+    if !$eventsource_mappings->{UUID};
 
-  my $rsp = eval { $lambda->UpdateEventSourceMapping($event_source_mappings); };
+  my $rsp = eval { $lambda->UpdateEventSourceMapping($eventsource_mappings); };
 
   return $self->_handle_response($rsp);
 }
@@ -581,13 +580,15 @@ sub cmd_lambda_create_function_url_config {
 
   my ( $function_name, $invoke_mode ) = $self->get_args;
 
+  $invoke_mode = $invoke_mode ? uc $invoke_mode : 'RESPONSE_STREAM';
+
   my $lambda = $self->_lambda;
 
   my $rsp = eval {
     return $lambda->CreateFunctionUrlConfig(
       { FunctionName => $function_name,
         AuthType     => 'NONE',
-        InvokeMode   => uc( $invoke_mode // 'RESPONSE_STREAM' ),
+        InvokeMode   => $invoke_mode,
       }
     );
   };

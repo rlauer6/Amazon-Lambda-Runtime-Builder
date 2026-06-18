@@ -45,16 +45,16 @@ sub cmd_s3_list_buckets {
 
   my $s3 = $self->_s3;
 
-  my $bucket_list = eval { return $s3->list_buckets; };
+  my ($bucket_name) = $self->get_args;
 
-  if ( !$bucket_list && $EVAL_ERROR ) {
-    print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
-  }
+  my $rsp = eval { return $s3->list_buckets; };
 
-  if ($bucket_list) {
-    print {*STDOUT} JSON->new->pretty->encode($bucket_list);
-  }
+  return $self->_handle_response($rsp)
+    if !$bucket_name;
+
+  ($bucket_name) = grep { $bucket_name eq $_ } map { $_->{name} } @{ $rsp->{buckets} // [] };
+
+  print {*STDOUT} $bucket_name // q{};
 
   return $SUCCESS;
 }
@@ -86,15 +86,7 @@ sub cmd_s3_get_bucket_notification_configuration {
 
   my $rsp = eval { $s3->get_bucket_notification_configuration($bucket_name); };
 
-  if ( !$rsp && $EVAL_ERROR ) {
-    print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
-  }
-  elsif ($rsp) {
-    print {*STDOUT} JSON->new->pretty->encode($rsp);
-  }
-
-  return $SUCCESS;
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################

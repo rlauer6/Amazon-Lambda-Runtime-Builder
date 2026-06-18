@@ -192,8 +192,11 @@ sub cmd_sqs_set_queue_bucket_policy {
     ]
   };
 
-  return
-    eval { $self->_sqs_set_queue_attributes( attributes => { Policy => encode_json($policy) }, queue_name => $queue_name, ); };
+  my $rsp = $self->_sqs_set_queue_attributes(
+    attributes => { Policy => encode_json($policy) },
+    queue_name => $queue_name,
+  );
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################

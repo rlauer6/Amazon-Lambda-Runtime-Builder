@@ -86,17 +86,19 @@ $(CACHE_DIR)/lambda-sqs-trigger: \
     $(CACHE_DIR)/lambda-function \
     $(CACHE_DIR)/sqs-queue \
     $(CACHE_DIR)/sqs-queue-redrive \
-    $(CACHE_DIR)/lambda-sqs-permission | $(CACHE_DIR) ## create SQS event source mapping
-	$(NO_ECHO)trigger="$$(alr-helper list-event-source-mappings \
+    $(CACHE_DIR)/lambda-sqs-permission | $(CACHE_DIR)
+	$(NO_ECHO)trigger="$$(alr-helper list-eventsource-mappings \
 	    $(FUNCTION_NAME) \
 	    queue:$(QUEUE_NAME) | \
 	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}')"; \
 	if [[ -z "$$trigger" || "$$trigger" = "None" ]]; then \
-	  trigger="$$(alr-helper create-event-source-mappings \
+	  trigger="$$(alr-helper create-eventsource-mappings \
 	    $(FUNCTION_NAME) queue:$(QUEUE_NAME) \
 	    batch-size:$(BATCH_SIZE))"; \
+	  uuid=$$(echo "$$trigger" | perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{UUID}//q{}'); \
+	  alr-helper wait-eventsource-mapping-enabled $$uuid; \
 	fi; \
-	test -z "$$trigger" && rm -f $@ && exit 1; \
+	test -z "$$trigger" && { rm -f $@ && exit 1; }; \
 	echo "$$trigger" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
 
@@ -141,12 +143,12 @@ endif
 
 $(CACHE_DIR)/lambda-sqs-response-types: $(CACHE_DIR)/lambda-sqs-trigger lambda.env | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
-	uuid=$$(alr-helper list-event-source-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | \
+	uuid=$$(alr-helper list-eventsource-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | \
 	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}'); \
-	alr-helper wait-event-source-mapping-enabled $$uuid; \
-	rsp="$$(alr-helper update-event-source-mapping uuid:$$uuid $(RESPONSE_TYPES_ARG)"; \
-	test -z "$$rsp" || { rm -f > $@ && exit 1; }; \
-	echo "$$rsp" > $@ || { rm -f > $@ && exit 1; }; \
+	alr-helper wait-eventsource-mapping-enabled $$uuid; \
+	rsp="$$(alr-helper update-eventsource-mapping uuid:$$uuid $(RESPONSE_TYPES_ARG))"; \
+	test -n "$$rsp" || { rm -f $@ && exit 1; }; \
+	echo "$$rsp" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
 
 .PHONY: lambda-sqs-teardown
@@ -155,10 +157,10 @@ lambda-sqs-teardown: _lambda-sqs-teardown clean ## deprovision full s3-sqs stack
 .PHONY: _lambda-sqs-teardown
 _lambda-sqs-teardown:
 	$(NO_ECHO)alr-helper remove-bucket-notification $(BUCKET_NAME) || true; \
-	uuid=$$(alr-helper list-event-source-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) 2>/dev/null | \
+	uuid=$$(alr-helper list-eventsource-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) 2>/dev/null | \
 	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}'); \
 	if [[ -n "$$uuid" ]]; then \
-	  alr-helper delete-event-source-mappings $$uuid || true; \
+	  alr-helper delete-eventsource-mappings $$uuid || true; \
 	fi; \
 	alr-helper delete-queue $(QUEUE_NAME) || true; \
 	alr-helper delete-queue $(DLQ_NAME) || true; \

@@ -3,7 +3,9 @@ SHELL := /bin/bash
 
 .SHELLFLAGS := -ec
 
--include lambda.env
+
+LAMBDA_ENV ?= lambda.env
+-include $(LAMBDA_ENV)
 
 FRAMEWORK_DIR ?= $(shell perl -MFile::ShareDir=dist_dir -e 'print dist_dir("Amazon-Lambda-Runtime-Builder")')
 
@@ -19,8 +21,8 @@ AWS_ACCOUNT   ?= $(shell alr-helper get-account)
 NOCACHE       ?=
 PAYLOAD       ?= payload-sns.json
 TIMEOUT       ?= 30
-BUILDER_HOME  ?= $(shell echo $$(pwd))
-CACHE_DIR     := $(BUILDER_HOME)/.cache
+BUILDER_HOME  ?= $(CURDIR)
+CACHE_DIR     := $(BUILDER_HOME)/.cache/$(FUNCTION_NAME)
 NO_ECHO       ?= @
 DIST_NAME     ?= $(notdir $(CURDIR))
 DIST_TARBALL  ?= $(shell ls $(BUILDER_HOME)/$(DIST_NAME)-*.tar.gz 2>/dev/null | sort -V | tail -1)
@@ -176,13 +178,13 @@ POLICIES_FILE ?= policies
 ifeq ($(ROLE_PROFILE),)
   ifeq ($(wildcard $(POLICIES_FILE)),)
     $(error No policies file '$(POLICIES_FILE)' found and ROLE_PROFILE is not set. \
-      Either create a policies file or set ROLE_PROFILE in lambda.env)
+      Either create a policies file or set ROLE_PROFILE in $(LAMBDA_ENV))
   endif
   ATTACH_POLICIES_CMD = alr-helper attach-policy $(ROLE_NAME) $(POLICIES_FILE)
   POLICIES_PREREQ     = $(POLICIES_FILE)
 else
   ATTACH_POLICIES_CMD = alr-helper attach-policies-from-profile $(ROLE_NAME) $(ROLE_PROFILE)
-  POLICIES_PREREQ     = lambda.env
+  POLICIES_PREREQ     = $(LAMBDA_ENV)
 endif
 
 $(CACHE_DIR)/lambda-policies: $(CACHE_DIR)/lambda-role $(POLICIES_PREREQ) | $(CACHE_DIR)
@@ -191,7 +193,7 @@ $(CACHE_DIR)/lambda-policies: $(CACHE_DIR)/lambda-role $(POLICIES_PREREQ) | $(CA
 	$(ATTACH_POLICIES_CMD) > $$policies && cp $$policies $@ && chmod 444 $@ || rm -f $@
 
 .PHONY: update-policies
-update-policies: $(POLICIES_PREREQ) ## re-attach IAM policies (from role.profile via lambda.env, or from policies file)
+update-policies: $(POLICIES_PREREQ) ## re-attach IAM policies (from role.profile via $(LAMBDA_ENV), or from policies file)
 	$(NO_ECHO)$(MAKE) $(CACHE_DIR)/lambda-policies
 
 ########################################################################
@@ -223,14 +225,14 @@ $(CACHE_DIR)/lambda-function: \
 
 MEMORY ?= 128
 
-$(CACHE_DIR)/lambda-configuration: $(CACHE_DIR)/lambda-function lambda.env | $(CACHE_DIR)
+$(CACHE_DIR)/lambda-configuration: $(CACHE_DIR)/lambda-function $(LAMBDA_ENV) | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	alr-helper update-function-configuration $(FUNCTION_NAME) memory-size:$(MEMORY) timeout:$(TIMEOUT) > $@ && chmod 444 $@
 
-lambda-configuration: $(CACHE_DIR)/lambda-configuration ## update function memory/timeout from lambda.env
+lambda-configuration: $(CACHE_DIR)/lambda-configuration ## update function memory/timeout from $(LAMBDA_ENV)
 
 .PHONY: update-lambda-configuration
-update-lambda-configuration: ## force update of Lambda function configuration from lambda.env
+update-lambda-configuration: ## force update of Lambda function configuration from $(LAMBDA_ENV)
 	$(NO_ECHO)rm -f $(CACHE_DIR)/lambda-configuration || true; \
 	$(MAKE) -f $(firstword $(MAKEFILE_LIST)) lambda-configuration
 
@@ -240,9 +242,11 @@ ifeq ($(TRIGGER_TYPE),eventbridge)
 	$(MAKE) lambda-eventbridge-pipeline
 else ifeq ($(TRIGGER_TYPE),s3-sqs)
 	$(MAKE) lambda-sqs-pipeline
+else ifeq ($(TRIGGER_TYPE),s3-direct)
+	$(MAKE) lambda-s3-pipeline
 else
 	$(error Unknown or unset TRIGGER_TYPE: '$(TRIGGER_TYPE)'. \
-	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge)
+	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge, s3-direct)
 endif
 
 .PHONY: lambda-teardown
@@ -251,10 +255,13 @@ ifeq ($(TRIGGER_TYPE),eventbridge)
 	$(MAKE) lambda-eventbridge-teardown
 else ifeq ($(TRIGGER_TYPE),s3-sqs)
 	$(MAKE) lambda-sqs-teardown
+else ifeq ($(TRIGGER_TYPE),s3-direct)
+	$(MAKE) lambda-s3-teardown
 else
 	$(error Unknown or unset TRIGGER_TYPE: '$(TRIGGER_TYPE)'. \
-	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge)
+	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge, s3-direct)
 endif
+
 
 ########################################################################
 # invoke Lambda function
@@ -315,6 +322,8 @@ CLEANFILES = \
     $(CACHE_DIR)/lambda-eventbridge-trigger \
     $(CACHE_DIR)/lambda-sqs-trigger \
     $(CACHE_DIR)/lambda-s3-trigger \
+    $(CACHE_DIR)/lambda-configuration \
+    $(CACHE_DIR)/lambda-sqs-response-types \
     $(CACHE_DIR)/policy-document \
     $(CACHE_DIR)/sns \
     $(CACHE_DIR)/sqs-queue \

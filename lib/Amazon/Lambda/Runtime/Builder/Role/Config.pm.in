@@ -10,6 +10,30 @@ use List::Util qw(pairs);
 use Role::Tiny;
 
 ########################################################################
+sub _env_file {
+########################################################################
+  my ($self) = @_;
+
+  my $config = $self->get_config_file // 'lambda.env';
+
+  return $config =~ /[.]ya?ml$/xsm
+    ? $config =~ s/[.]ya?ml$/.env/r
+    : $config;
+}
+
+########################################################################
+sub _yaml_file {
+########################################################################
+  my ($self) = @_;
+
+  my $config = $self->get_config_file // 'lambda.env';
+
+  return $config =~ /[.]ya?ml$/xsm
+    ? $config
+    : $config =~ s/[.]env$/.yaml/r;
+}
+
+########################################################################
 sub _yaml_get {
 ########################################################################
   my ( $node, $path ) = @_;
@@ -42,14 +66,17 @@ sub _lambda_env_needs_regen {
 ########################################################################
   my ( $self, $mapping_version ) = @_;
 
-  return $FALSE if !-e 'lambda.yaml';
-  return $TRUE  if !-e 'lambda.env';
+  my $yaml_file = $self->_yaml_file;
+  my $env_file  = $self->_env_file;
 
-  if ( ( stat 'lambda.yaml' )[9] > ( stat 'lambda.env' )[9] ) {
+  return $FALSE if !-e $yaml_file;
+  return $TRUE  if !-e $env_file;
+
+  if ( ( stat $yaml_file )[9] > ( stat $env_file )[9] ) {
     return $TRUE;
   }
 
-  open my $fh, '<', 'lambda.env'
+  open my $fh, '<', $env_file
     or return $TRUE;
 
   my $first_line = <$fh>;
@@ -73,16 +100,19 @@ sub _generate_lambda_env {
 
   require YAML::Tiny;
 
+  my $yaml_file = $self->_yaml_file;
+  my $env_file  = $self->_env_file;
+
   my $mapping_doc     = $self->_load_mapping;
   my $mapping_version = $mapping_doc->{version};
 
   return
     if !$self->_lambda_env_needs_regen($mapping_version);
 
-  my $yaml = eval { YAML::Tiny->read('lambda.yaml'); };
+  my $yaml = eval { YAML::Tiny->read($yaml_file); };
 
   if ( !$yaml ) {
-    $self->get_logger->warn("could not parse lambda.yaml: $EVAL_ERROR");
+    $self->get_logger->warn("could not parse $yaml_file: $EVAL_ERROR");
     return;
   }
 
@@ -98,10 +128,9 @@ sub _generate_lambda_env {
 
     if ( !defined $value ) {
       if ( $entry->{required} ) {
-        $self->get_logger->warn("$path is required in lambda.yaml (maps to $var) - not regenerating lambda.env");
+        $self->get_logger->warn("$path is required in $yaml_file (maps to $var) - not regenerating $env_file");
         return;
       }
-
       next;
     }
 
@@ -114,7 +143,6 @@ sub _generate_lambda_env {
     }
 
     $prev_section = $section;
-
     push @lines, sprintf '%-20s= %s', $var, $value;
   }
 
@@ -124,9 +152,9 @@ sub _generate_lambda_env {
 # delete lambda.yaml to make this file hand-editable.
 END_HEADER
 
-  open my $fh, '>', 'lambda.env'
+  open my $fh, '>', $env_file
     or do {
-    $self->get_logger->warn("could not open lambda.env for writing: $OS_ERROR");
+    $self->get_logger->warn("could not open $env_file for writing: $OS_ERROR");
     return;
     };
 
@@ -136,7 +164,7 @@ END_HEADER
 
   close $fh;
 
-  $self->get_logger->info('regenerated lambda.env from lambda.yaml');
+  $self->get_logger->info("regenerated $env_file from $yaml_file");
 
   return;
 }
@@ -237,19 +265,21 @@ sub cmd_generate_yaml {
 ########################################################################
   my ($self) = @_;
 
-  die "ERROR: lambda.env not found in current directory\n"
-    if !-e 'lambda.env';
+  my $env_file  = $self->_env_file;
+  my $yaml_file = $self->_yaml_file;
 
-  die "ERROR: lambda.yaml already exists - remove it first to regenerate\n"
-    if -e 'lambda.yaml';
+  die "ERROR: $env_file not found in current directory\n"
+    if !-e $env_file;
+
+  die "ERROR: $yaml_file already exists - remove it first to regenerate\n"
+    if -e $yaml_file;
 
   my %provided = $self->_read_lambda_env;
   my $result   = $self->_walk_mapping( \%provided );
 
   if ( @{ $result->{missing} } ) {
     my @names = map { sprintf '%s (%s)', $_->{env}, $_->{yaml} } @{ $result->{missing} };
-
-    die "ERROR: cannot generate lambda.yaml - missing required values:\n  " . join( "\n  ", @names ) . "\n";
+    die "ERROR: cannot generate $yaml_file - missing required values:\n  " . join( "\n  ", @names ) . "\n";
   }
 
   my $config = { trigger => { type => $result->{trigger_type} } };
@@ -260,9 +290,9 @@ sub cmd_generate_yaml {
   }
 
   require YAML::Tiny;
-  YAML::Tiny->new($config)->write('lambda.yaml');
+  YAML::Tiny->new($config)->write($yaml_file);
 
-  $self->get_logger->info('wrote lambda.yaml from lambda.env');
+  $self->get_logger->info("wrote $yaml_file from $env_file");
 
   return $SUCCESS;
 }
@@ -272,12 +302,13 @@ sub _read_lambda_env {
 ########################################################################
   my ($self) = @_;
 
+  my $env_file = $self->_env_file;
   my %env;
 
-  return %env if !-e 'lambda.env';
+  return %env if !-e $env_file;
 
-  open my $fh, '<', 'lambda.env'
-    or die "ERROR: could not open lambda.env\n$OS_ERROR";
+  open my $fh, '<', $env_file
+    or die "ERROR: could not open $env_file\n$OS_ERROR";
 
   while ( my $line = <$fh> ) {
     next if $line =~ /^\s*[#]/xsm || $line !~ /\S/xsm;

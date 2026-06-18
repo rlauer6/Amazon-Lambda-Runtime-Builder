@@ -42,3 +42,9 @@ lambda-pipeline:
 
 update-lambda-configuration:
 	$(MAKE) -f $(ALR_BUILDER) update-lambda-configuration
+
+lambda-s3-pipeline:
+	$(MAKE) -f $(ALR_BUILDER) lambda-s3-pipeline
+
+lambda-s3-teardown:
+	$(MAKE) -f $(ALR_BUILDER) lambda-s3-teardown

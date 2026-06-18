@@ -42,6 +42,11 @@ sub init {
     $ENV{AWS_PROFILE} = $self->get_profile;
   }
 
+  my ($config) = grep { defined $_ } ( $self->get_config_file, @ENV{qw(LAMBDA_ENV LAMBDA_YAML)} );
+  $config //= 'lambda.env';
+
+  $self->set_config_file($config);
+
   eval { $self->_generate_lambda_env };
 
   if ($EVAL_ERROR) {
@@ -65,6 +70,7 @@ sub main {
 
   my @option_specs = qw(
     help|h
+    config-file|c=s
     install-dir|i=s
     log-level|l=s
     profile|p=s
@@ -74,7 +80,7 @@ sub main {
   my $cli = Amazon::Lambda::Runtime::Builder->new(
     commands      => \%commands,
     option_specs  => \@option_specs,
-    extra_options => [qw(dist_dir manifest)],
+    extra_options => [qw(dist_dir manifest lambda_env lambda_yaml)],
     abbreviations => $TRUE,
   );
 

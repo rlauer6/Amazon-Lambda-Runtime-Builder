@@ -1,10 +1,11 @@
-version: 1.2
+version: 1.3
 
 # trigger.type values this version of lambda-mapping.yml understands.
 # generate-yaml/init() validate lambda.yaml's trigger.type against this
 # list and error clearly if it names a pattern not yet supported.
 trigger_types:
   - s3-sqs
+  - s3-direct
   - eventbridge
 
 mapping:
@@ -48,17 +49,20 @@ mapping:
     required: true
     applies_to:
       - s3-sqs
+      - s3-direct
 
   - yaml: trigger.prefix
     env: KEY_PREFIX
     applies_to:
       - s3-sqs
+      - s3-direct
 
   - yaml: trigger.event
     env: S3_EVENT
     default: 's3:ObjectCreated:*'
     applies_to:
       - s3-sqs
+      - s3-direct
 
   - yaml: trigger.queue.name
     env: QUEUE_NAME
