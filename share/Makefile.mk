@@ -5,6 +5,18 @@ SHELL := /bin/bash
 
 
 LAMBDA_ENV ?= lambda.env
+LAMBDA_YAML ?= lambda.yaml
+
+NEEDS_LAMBDA_ENV := $(filter-out clean,$(MAKECMDGOALS))
+
+ifneq ($(NEEDS_LAMBDA_ENV),)
+ifeq ($(wildcard $(LAMBDA_ENV)),)
+  $(error $(LAMBDA_ENV) not found. \
+    Run 'alr-builder check-env-file' to generate it from $(LAMBDA_YAML), \
+    or copy an example $(LAMBDA_ENV) into this directory and edit it)
+endif
+endif
+
 -include $(LAMBDA_ENV)
 
 FRAMEWORK_DIR ?= $(shell perl -MFile::ShareDir=dist_dir -e 'print dist_dir("Amazon-Lambda-Runtime-Builder")')
@@ -124,7 +136,7 @@ $(CACHE_DIR)/image: \
 	  --build-arg EXTRA_RUNTIME_PACKAGES="$(EXTRA_RUNTIME_PACKAGES)" \
 	  $$resolver \
 	  -f $$buildctx/Dockerfile -t $(REPO_NAME) $$buildctx && \
-	docker inspect $(REPO_NAME):latest > $@ && chmod 444 $@ || rm -f $@
+	docker inspect $(REPO_NAME):latest > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 include $(FRAMEWORK_DIR)/ecr-create-repo.mk
 
@@ -138,7 +150,7 @@ $(CACHE_DIR)/deploy: $(CACHE_DIR)/ecr-repo $(CACHE_DIR)/image | $(CACHE_DIR)
 	$(call ecr_login,$(shell cat $(CACHE_DIR)/ecr-repo))
 	$(NO_ECHO)URI=$$(cat $(CACHE_DIR)/ecr-repo); \
 	docker tag $(REPO_NAME):latest $$URI:latest; \
-	docker push $$URI:latest > $@ && chmod 444 $@ || rm -f $@
+	docker push $$URI:latest > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 ########################################################################
 define create_assume_role_policy
@@ -162,7 +174,7 @@ export s_create_assume_policy = $(value create_assume_role_policy)
 ########################################################################
 
 $(CACHE_DIR)/policy-document: | $(CACHE_DIR)
-	$(NO_ECHO)alr-helper create-assume-policy lambda.amazonaws.com > $@ && chmod 444 $@ || rm -f $@
+	$(NO_ECHO)alr-helper create-assume-policy lambda.amazonaws.com > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 $(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
@@ -170,7 +182,7 @@ $(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
 	    echo "role $(ROLE_NAME) already exists"; \
 	    chmod 444 $@; \
 	else \
-	    alr-helper create-role $(ROLE_NAME) $< > $@ && chmod 444 $@ || rm -f $@; \
+	    alr-helper create-role $(ROLE_NAME) $< > $@ && chmod 444 $@ || { rm -f $@; exit 1; }; \
 	fi
 
 POLICIES_FILE ?= policies
@@ -190,7 +202,7 @@ endif
 $(CACHE_DIR)/lambda-policies: $(CACHE_DIR)/lambda-role $(POLICIES_PREREQ) | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	policies=$$(mktemp); trap 'rm -f $$policies' EXIT; \
-	$(ATTACH_POLICIES_CMD) > $$policies && cp $$policies $@ && chmod 444 $@ || rm -f $@
+	$(ATTACH_POLICIES_CMD) > $$policies && cp $$policies $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 .PHONY: update-policies
 update-policies: $(POLICIES_PREREQ) ## re-attach IAM policies (from role.profile via $(LAMBDA_ENV), or from policies file)
@@ -203,7 +215,7 @@ update-policies: $(POLICIES_PREREQ) ## re-attach IAM policies (from role.profile
 $(CACHE_DIR)/image-digest: $(CACHE_DIR)/deploy | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	alr-helper describe-images $(REPO_NAME) | \
-	  perl -MJSON -0ne 'print decode_json($$_)->{imageDigest}' > $@ && chmod 444 $@ || rm -f $@
+	  perl -MJSON -0ne 'print decode_json($$_)->{imageDigest}' > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 $(CACHE_DIR)/lambda-function: \
     $(CACHE_DIR)/image-digest \
@@ -214,14 +226,14 @@ $(CACHE_DIR)/lambda-function: \
 	DIGEST="$$(cat $(CACHE_DIR)/image-digest)"; \
 	URI="$$(cat $(CACHE_DIR)/ecr-repo)"; \
 	function="$$(alr-helper get-function $(FUNCTION_NAME) 2>/dev/null)"; \
-	if [[ -z "$$function" ]]; then \
-	  alr-helper create-function $(FUNCTION_NAME) $(ROLE_NAME) $$URI; \
-	elif ! echo "$$function" | grep -q '"FunctionName"'; then \
-	  echo "ERROR: get-function failed: $$function" >&2; exit 1; \
-	else \
+	if echo "$$function" | grep -q '"FunctionName"'; then \
 	  alr-helper update-function $(FUNCTION_NAME) $$URI $$DIGEST; \
+	elif [[ -z "$$function" ]]; then \
+	  alr-helper create-function $(FUNCTION_NAME) $(ROLE_NAME) $$URI; \
+	else \
+	  echo "ERROR: get-function failed: $$function" >&2; exit 1; \
 	fi; \
-	echo "$$URI@$$DIGEST" > $@ && chmod 444 $@ || rm -f $@
+	echo "$$URI@$$DIGEST" > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 MEMORY ?= 128
 
@@ -244,9 +256,11 @@ else ifeq ($(TRIGGER_TYPE),s3-sqs)
 	$(MAKE) lambda-sqs-pipeline
 else ifeq ($(TRIGGER_TYPE),s3-direct)
 	$(MAKE) lambda-s3-pipeline
+else ifeq ($(TRIGGER_TYPE),sns)
+	$(MAKE) lambda-sns-pipeline
 else
 	$(error Unknown or unset TRIGGER_TYPE: '$(TRIGGER_TYPE)'. \
-	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge, s3-direct)
+	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge, s3-direct, sns)
 endif
 
 .PHONY: lambda-teardown
@@ -257,9 +271,11 @@ else ifeq ($(TRIGGER_TYPE),s3-sqs)
 	$(MAKE) lambda-sqs-teardown
 else ifeq ($(TRIGGER_TYPE),s3-direct)
 	$(MAKE) lambda-s3-teardown
+else ifeq ($(TRIGGER_TYPE),sns)
+	$(MAKE) lambda-sns-teardown
 else
 	$(error Unknown or unset TRIGGER_TYPE: '$(TRIGGER_TYPE)'. \
-	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge, s3-direct)
+	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge, s3-direct, sns)
 endif
 
 
@@ -271,10 +287,10 @@ invoke: ## invoke Lambda function with test payload $(CACHE_DIR)/lambda-function
 	$(NO_ECHO)alr-helper invoke-function $(FUNCTION_NAME) $(PAYLOAD)
 
 ########################################################################
-# Test targets:
-########################################################################
 # SNS
-#   make sns
+#   make TOPIC_NAME=my-topic FUNCTION_NAME=my-fn lambda-sns-pipeline
+#   make lambda-sns-teardown
+#   make sns   (test-invoke only)
 ########################################################################
 include $(FRAMEWORK_DIR)/sns.mk
 
@@ -326,6 +342,9 @@ CLEANFILES = \
     $(CACHE_DIR)/lambda-sqs-response-types \
     $(CACHE_DIR)/policy-document \
     $(CACHE_DIR)/sns \
+    $(CACHE_DIR)/sns-topic \
+    $(CACHE_DIR)/lambda-sns-permission \
+    $(CACHE_DIR)/lambda-sns-trigger \
     $(CACHE_DIR)/sqs-queue \
     $(CACHE_DIR)/s3-bucket \
     $(CACHE_DIR)/sqs-dlq \
@@ -357,6 +376,7 @@ clean: ## remove all generated sentinels and docker artifacts
     update-policies \
     lambda-s3-trigger \
     lambda-sqs-trigger \
+    lambda-sns-trigger \
     sns
 
 .PHONY: show-makefiles

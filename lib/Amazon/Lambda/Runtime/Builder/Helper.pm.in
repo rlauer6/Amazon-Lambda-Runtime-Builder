@@ -9,6 +9,8 @@ use Data::Dumper;
 use English qw(-no_match_vars);
 use File::Basename qw(basename);
 use JSON;
+use List::Util qw(none);
+use Scalar::Util qw(reftype);
 
 use Role::Tiny::With;
 with 'Amazon::Lambda::Runtime::Builder::Role::ECR';
@@ -18,6 +20,7 @@ with 'Amazon::Lambda::Runtime::Builder::Role::Lambda';
 with 'Amazon::Lambda::Runtime::Builder::Role::Logs';
 with 'Amazon::Lambda::Runtime::Builder::Role::S3';
 with 'Amazon::Lambda::Runtime::Builder::Role::SQS';
+with 'Amazon::Lambda::Runtime::Builder::Role::SNS';
 with 'Amazon::Lambda::Runtime::Builder::Role::STS';
 
 use Readonly;
@@ -39,6 +42,9 @@ sub _scalar_or_array {
   return $value
     if defined $value && $value !~ /^\@/xsm;
 
+  return
+    if !defined $value;
+
   $value =~ s/\@//xsm;
   $value = [ split /,/xsm, $value ];
 
@@ -48,9 +54,28 @@ sub _scalar_or_array {
 ########################################################################
 sub _parse_params {
 ########################################################################
-  my ( $self, @params ) = @_;
+  my ( $self, @args ) = @_;
 
-  if ( $params[0] =~ /^file:\/\/(.*)[.]json$/xsm ) {
+  my @params;
+  my @required_params;
+  my @valid_params;
+  my $allow_file;
+
+  if ( ref $args[0] && reftype( $args[0] ) eq 'HASH' ) {
+    @params = @{ $args[0]->{parameters} // [] };
+    return if !@params;
+
+    @required_params = @{ $args[0]->{required} // [] };
+    @valid_params    = @{ $args[0]->{valid}    // [] };
+    $allow_file      = $args[0]->{allow_file};
+  }
+  else {
+    @params = @args;
+  }
+
+  $allow_file //= $TRUE;
+
+  if ( $allow_file && @params && $params[0] =~ /^file:\/\/(.*)[.]json$/xsm ) {
     my $file = $1;
 
     die "ERROR: file $file not found\n"
@@ -62,26 +87,70 @@ sub _parse_params {
   my %configuration;
 
   foreach my $p (@params) {
-    my @parts = split /[:=]/xsm, $p;
+    die sprintf "ERROR: %s is not a valid parameter - must be one of %s\n", $p, join q{,}, @valid_params
+      if @valid_params && none { $_ eq $p } @valid_params;
 
-    my ( $k, $v ) = choose {
-      return @parts
-        if @parts == 2;
+    my ( $k, $v );
 
-      die "ERROR: invalid parameter\n"
-        if @parts > 3;
+    my @eq_parts = split /=/xsm, $p, 2;
 
-      my ($parameter) = toPascalCase( $parts[1] );
+    if ( @eq_parts == 2 ) {
+      ( $k, $v ) = @eq_parts;
+    }
+    else {
+      my @parts = split /:/xsm, $p;
 
-      return ( $parts[0], { $parameter => _scalar_or_array( $parts[2] ) } );
-    };
+      ( $k, $v ) = choose {
+        die "ERROR: invalid parameter - use key=value or key:value\n"
+          if @parts < 2;
+
+        return @parts
+          if @parts == 2;
+
+        die "ERROR: invalid parameter '$p' - if the value contains a colon (ARN, URL), use '=' instead: key=value\n"
+          if @parts > 3;
+
+        my ($parameter) = toPascalCase( $parts[1] );
+
+        return ( $parts[0], { $parameter => _scalar_or_array( $parts[2] ) } );
+      };
+    }
 
     ($k) = toPascalCase($k);
     $v = ref $v ? $v : _scalar_or_array($v);
-    $configuration{$k} = $v;
+
+    if ( ref $v eq 'HASH' && ref $configuration{$k} eq 'HASH' ) {
+      $configuration{$k} = { %{ $configuration{$k} }, %{$v} };
+    }
+    else {
+      $configuration{$k} = $v;
+    }
+  }
+
+  foreach my $p (@required_params) {
+    ($p) = toPascalCase($p);
+
+    die "ERROR: $_ is a required parameter\n"
+      if !exists $configuration{$p};
   }
 
   return \%configuration;
+}
+
+########################################################################
+sub _resolve_file_arg {
+########################################################################
+  my ( $self, $arg ) = @_;
+
+  return $arg
+    if $arg !~ /^file:\/\/(.*)[.]json$/xsm;
+
+  my $file = $1;
+
+  die "ERROR: file $file not found\n"
+    if !-e $file;
+
+  return slurp_json($file);
 }
 
 ########################################################################
@@ -94,7 +163,7 @@ sub _handle_response {
     return $FAILURE;
   }
 
-  print {*STDOUT} $rsp ? JSON->new->pretty->encode($rsp) : q{};
+  print {*STDOUT} $rsp && ref $rsp ? JSON->new->pretty->encode($rsp) : defined $rsp ? $rsp : q{};
 
   return $SUCCESS;
 }
@@ -234,19 +303,21 @@ sub init {
 sub main {
 ########################################################################
   my %commands = (
-    'add-permission'                   => \&cmd_lambda_add_permission,
-    'attach-policies-from-profile'     => \&cmd_attach_policies_from_profile,
-    'attach-policy'                    => \&cmd_iam_attach_role_policy,
-    'check'                            => \&cmd_check,
-    'create-assume-policy'             => \&cmd_create_assume_policy,
-    'create-bucket'                    => \&cmd_s3_create_bucket,
-    'create-cpanfile'                  => \&cmd_create_cpanfile,
-    'create-eventsource-mappings'      => \&cmd_lambda_create_eventsource_mappings,
-    'create-function'                  => \&cmd_lambda_create_function,
-    'create-function-url-config'       => \&cmd_lambda_create_function_url_config,
-    'create-queue'                     => \&cmd_sqs_create_queue,
-    'create-repository'                => \&cmd_ecr_create_repository,
-    'create-role'                      => \&cmd_iam_create_role,
+    'add-permission'               => \&cmd_lambda_add_permission,
+    'attach-policies-from-profile' => \&cmd_attach_policies_from_profile,
+    'attach-policy'                => \&cmd_iam_attach_role_policy,
+    'check'                        => \&cmd_check,
+    'create-assume-policy'         => \&cmd_create_assume_policy,
+    'create-bucket'                => \&cmd_s3_create_bucket,
+    'create-cpanfile'              => \&cmd_create_cpanfile,
+    'create-eventsource-mappings'  => \&cmd_lambda_create_eventsource_mappings,
+    'create-function'              => \&cmd_lambda_create_function,
+    'create-function-url-config'   => \&cmd_lambda_create_function_url_config,
+    'create-queue'                 => \&cmd_sqs_create_queue,
+    'create-repository'            => \&cmd_ecr_create_repository,
+    'create-role'                  => \&cmd_iam_create_role,
+    'create-topic'                 => \&cmd_sns_create_topic,
+
     'delete-eventsource-mappings'      => \&cmd_lambda_delete_eventsource_mappings,
     'delete-function'                  => \&cmd_lambda_delete_function,
     'delete-function-url-config'       => \&cmd_lambda_delete_function_url_config,
@@ -255,6 +326,7 @@ sub main {
     'delete-repo-policy'               => \&cmd_ecr_delete_repository_policy,
     'delete-role'                      => \&cmd_iam_delete_role,
     'delete-rule'                      => \&cmd_eventbridge_delete_rule,
+    'delete-topic'                     => \&cmd_sns_delete_topic,
     'describe-images'                  => \&cmd_ecr_describe_images,
     'describe-log-streams'             => \&cmd_logs_describe_log_streams,
     'describe-repositories'            => \&cmd_ecr_describe_repositories,
@@ -266,6 +338,7 @@ sub main {
     'get-account'                      => \&cmd_sts_get_account,
     'get-bucket-notification'          => \&cmd_s3_get_bucket_notification_configuration,
     'get-function'                     => \&cmd_lambda_get_function,
+    'get-function-arn'                 => \&cmd_lambda_get_function_arn,
     'get-function-concurrency'         => \&cmd_lambda_get_function_concurrency,
     'get-function-configuration'       => \&cmd_lambda_get_function_configuration,
     'get-function-url-config'          => \&cmd_lambda_get_function_url_config,
@@ -277,11 +350,16 @@ sub main {
     'get-queue-attributes'             => \&cmd_sqs_get_queue_attributes,
     'get-queue-policy'                 => \&cmd_sqs_get_queue_policy,
     'get-role'                         => \&cmd_iam_get_role,
+    'get-topic'                        => \&cmd_sns_get_topic_attributes,
+    'get-subscription'                 => \&cmd_sns_get_subscription,
     'invoke-function'                  => \&cmd_lambda_invoke_function,
     'list-attached-policies'           => \&cmd_iam_list_attached_policies,
     'list-buckets'                     => \&cmd_s3_list_buckets,
     'list-eventsource-mappings'        => \&cmd_lambda_list_eventsource_mappings,
     'list-queues'                      => \&cmd_sqs_list_queues,
+    'list-subscriptions'               => \&cmd_sns_list_subscriptions_by_topic,
+    'list-topics'                      => \&cmd_sns_list_topics,
+    'publish'                          => \&cmd_sns_publish,
     'put-bucket-notification'          => \&cmd_s3_put_bucket_notification_configuration,
     'put-function-concurrency'         => \&cmd_lambda_put_function_concurrency,
     'put-lambda-target'                => \&cmd_eventbridge_put_lambda_target,
@@ -294,6 +372,8 @@ sub main {
     'remove-permission'                => \&cmd_lambda_remove_permission,
     'set-queue-bucket-policy'          => \&cmd_sqs_set_queue_bucket_policy,
     'set-queue-redrive-policy'         => \&cmd_sqs_set_queue_redrive_policy,
+    'subscribe'                        => \&cmd_sns_subscribe,
+    'unsubscribe'                      => \&cmd_sns_unsubscribe,
     'update-eventsource-mapping'       => \&cmd_lambda_update_eventsource_mapping,
     'update-function'                  => \&cmd_lambda_update_function_code,
     'update-function-configuration'    => \&cmd_lambda_update_function_configuration,

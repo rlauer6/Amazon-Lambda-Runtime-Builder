@@ -17,7 +17,7 @@ $(CACHE_DIR)/ecr-uri: | $(CACHE_DIR)
 	  echo "ERROR: could not determine ECR repository URI for $(REPO_NAME)" >&2; \
 	  exit 1; \
 	fi; \
-	echo "$$repo_uri" > $@ && chmod 444 $@ || rm -f $@
+	echo "$$repo_uri" > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 $(CACHE_DIR)/ecr-lifecycle-policy: $(CACHE_DIR)/ecr-uri | $(CACHE_DIR)
 	$(NO_ECHO)lifecycle_policy=$$(alr-helper get-lifecycle-policy $(REPO_NAME) 2>&1 || true); \
@@ -28,7 +28,7 @@ $(CACHE_DIR)/ecr-lifecycle-policy: $(CACHE_DIR)/ecr-uri | $(CACHE_DIR)
 	  echo "ERROR: could not apply lifecycle policy to $(REPO_NAME)" >&2; \
 	  exit 1; \
 	fi; \
-	echo "$$lifecycle_policy" > $@ && chmod 444 $@ || rm -f $@
+	echo "$$lifecycle_policy" > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 $(CACHE_DIR)/ecr-repo: $(CACHE_DIR)/ecr-uri $(CACHE_DIR)/ecr-lifecycle-policy | $(CACHE_DIR) ## provision ECR repository with lifecycle policy 
 	$(NO_ECHO)cp $< $@

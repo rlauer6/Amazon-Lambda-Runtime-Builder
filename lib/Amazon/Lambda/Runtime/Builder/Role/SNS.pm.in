@@ -1,0 +1,272 @@
+package Amazon::Lambda::Runtime::Builder::Role::SNS;
+
+use strict;
+use warnings;
+
+use CLI::Simple::Constants qw(:booleans);
+use Data::Dumper;
+use English qw(-no_match_vars);
+use JSON;
+use List::Util qw(none);
+
+use Role::Tiny;
+
+{
+  my $sns;
+
+  ########################################################################
+  sub _sns {
+    ########################################################################
+    my ($self) = @_;
+
+    return $sns
+      if $sns;
+
+    require Amazon::API::SNS;
+
+    return Amazon::API::SNS->new( log_level => $self->get_log_level );
+  }
+}
+
+########################################################################
+sub _topic_arn {
+########################################################################
+  my ( $self, $name_or_arn ) = @_;
+
+  return $name_or_arn
+    if $name_or_arn =~ /^arn:/xsm;
+
+  my $account = $self->_sts_get_account;
+  my $region  = $self->get_region;
+
+  return sprintf 'arn:aws:sns:%s:%s:%s', $region, $account, $name_or_arn;
+}
+
+########################################################################
+sub cmd_sns_list_topics {
+########################################################################
+  my ($self) = @_;
+
+  my $sns = $self->_sns;
+
+  my $rsp = eval { $sns->ListTopics(); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_sns_list_subscriptions_by_topic {
+########################################################################
+  my ($self) = @_;
+
+  my ($name_or_arn) = $self->get_args;
+
+  my $rsp = eval { $self->_sns_list_subscriptions_by_topic( $self->_topic_arn($name_or_arn) ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_sns_get_subscription {
+########################################################################
+  my ($self) = @_;
+
+  my ( $name_or_arn, $arn ) = $self->get_args;
+
+  my ($endpoint) = eval {
+    my $rsp = $self->_sns_list_subscriptions_by_topic( $self->_topic_arn($name_or_arn) );
+
+    my @subscriptions = @{ $rsp->{Subscriptions} // [] };
+
+    return grep { $_->{Endpoint} eq $arn } @subscriptions;
+  };
+
+  return $self->_handle_response($endpoint);
+}
+
+########################################################################
+sub cmd_sns_confirm_subscription {
+########################################################################
+  my ($self) = @_;
+
+  my ( $name_or_arn, $token, $authenticate ) = $self->get_args;
+
+  my $req = {
+    TopicArn => $self->_topic_arn($name_or_arn),
+    Token    => $token,
+    $authenticate ? ( AuthenticateOnUnsubscribe => $authenticate ) : ()
+  };
+
+  my $rsp = eval { $self->_sns->ConfirmSubscription($req); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub _sns_list_subscriptions_by_topic {
+########################################################################
+  my ( $self, $topic_arn ) = @_;
+
+  my $sns = $self->_sns;
+
+  return $sns->ListSubscriptionsByTopic( { TopicArn => $topic_arn } );
+}
+
+########################################################################
+sub cmd_sns_create_topic {
+########################################################################
+  my ($self) = @_;
+
+  my ( $topic_name, @args ) = $self->get_args;
+
+  my $sns = $self->_sns;
+
+  my $params = @args ? $self->_parse_params(@args) : undef;
+
+  $self->get_logger->debug( Dumper( [ params => $params ] ) );
+
+  return $SUCCESS
+    if $self->get_dryrun;
+
+  my $req = {
+    Name => $topic_name,
+    ( $params && %{$params} ) ? ( Attributes => $params ) : (),
+  };
+
+  my $rsp = eval { $sns->CreateTopic($req); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub _sns_get_topic_attributes {
+########################################################################
+  my ( $self, $topic_arn ) = @_;
+
+  my $sns = $self->_sns;
+
+  return $sns->GetTopicAttributes( { TopicArn => $topic_arn } );
+}
+
+########################################################################
+sub cmd_sns_get_topic_attributes {
+########################################################################
+  my ($self) = @_;
+
+  my ($name_or_arn) = $self->get_args;
+
+  my $rsp = $self->_sns_get_topic_attributes( $self->_topic_arn($name_or_arn) );
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_sns_unsubscribe {
+########################################################################
+  my ($self) = @_;
+
+  my ($subscription_arn) = $self->get_args;
+
+  my $sns = $self->_sns;
+
+  my $rsp = eval { $sns->Unsubscribe( { SubscriptionArn => $subscription_arn } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_sns_subscribe {
+########################################################################
+  my ($self) = @_;
+
+  my ( $name_or_arn, @args ) = $self->get_args;
+
+  my $params = $self->_parse_params(@args);
+
+  my $protocol = delete $params->{Protocol};
+
+  die "ERROR: protocol is a required parameter\n"
+    if !$protocol;
+
+  my $endpoint = delete $params->{Endpoint};
+
+  my $req = {
+    TopicArn              => $self->_topic_arn($name_or_arn),
+    ReturnSubscriptionArn => $TRUE,
+    Protocol              => $protocol,
+    %{$params} ? ( Attributes => $params )   : (),
+    $endpoint  ? ( Endpoint   => $endpoint ) : ()
+  };
+
+  $self->get_logger->debug( Dumper( [ request => $req ] ) );
+
+  return $SUCCESS
+    if $self->get_dryrun;
+
+  my $sns = $self->_sns;
+
+  my $rsp = eval { $sns->Subscribe($req) };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_sns_delete_topic {
+########################################################################
+  my ($self) = @_;
+
+  my ($name_or_arn) = $self->get_args;
+
+  my $sns = $self->_sns;
+
+  my $rsp = eval { $sns->DeleteTopic( { TopicArn => $self->_topic_arn($name_or_arn) } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_sns_publish {
+########################################################################
+  my ($self) = @_;
+
+  my ( $message, @args ) = $self->get_args;
+
+  $message = $self->_resolve_file_arg($message);
+
+  my $params = $self->_parse_params(
+    { parameters => \@args,
+      required   => [qw(topic-arn)],
+      allow_file => $TRUE,
+    }
+  );
+
+  my $attrs = delete $params->{Attr} // {};
+
+  my $topic_arn = delete $params->{TopicArn};
+
+  die "ERROR: usage alr-helper publish message topic-arn=arn\n"
+    if !$message;
+
+  my %message_attributes = map { $_ => { DataType => 'String', StringValue => $attrs->{$_} } } keys %{$attrs};
+
+  my $req = {
+    TopicArn => $self->_topic_arn($topic_arn),
+    %{$params},  # Subject, MessageStructure, etc. pass through untouched
+    Message => ref $message ? encode_json($message) : $message,
+    ref $message        ? ( MessageStructure => 'json' )                : (),
+    %message_attributes ? ( MessageAttributes => \%message_attributes ) : (),
+  };
+
+  $self->get_logger->debug( Dumper( [ request => $req ] ) );
+
+  return $SUCCESS
+    if $self->get_dryrun;
+
+  my $sns = $self->_sns;
+
+  my $rsp = eval { $sns->Publish($req); };
+
+  return $self->_handle_response($rsp);
+}
+
+1;

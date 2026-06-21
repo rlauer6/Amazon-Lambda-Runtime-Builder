@@ -234,6 +234,7 @@ sub cmd_lambda_create_function {
         PackageType  => 'Image',
       }
     );
+
     $self->_wait_function_active( $function_name, $lambda );
   };
 
@@ -252,6 +253,28 @@ sub _lambda_get_function {
   my $lambda = $self->_lambda;
 
   return $lambda->GetFunction( { FunctionName => $function_name } );
+}
+
+########################################################################
+sub cmd_lambda_get_function_arn {
+########################################################################
+  my ($self) = @_;
+
+  my ($function_name) = $self->get_args;
+
+  my $function = eval { $self->_lambda_get_function($function_name)->{Configuration}{FunctionArn}; };
+
+  $function //= q{};
+
+  return $self->_handle_response($function)
+    if !$EVAL_ERROR;
+
+  if ( $EVAL_ERROR =~ /404/xsm ) {
+    local $EVAL_ERROR = q{};
+    return $self->_handle_response($function);
+  }
+
+  return $self->_handle_response($function);
 }
 
 ########################################################################
@@ -290,6 +313,18 @@ sub cmd_lambda_get_function {
   my ($function_name) = $self->get_args;
 
   my $rsp = eval { $self->_lambda_get_function($function_name); };
+
+  $rsp //= q{};
+
+  return $self->_handle_response($rsp)
+    if !$EVAL_ERROR;
+
+  if ( $EVAL_ERROR =~ /404/xsm ) {
+    local $EVAL_ERROR = q{};
+    return $self->_handle_response($rsp);
+  }
+
+  return $self->_handle_response($rsp);
 
   return $self->_handle_response($rsp);
 }

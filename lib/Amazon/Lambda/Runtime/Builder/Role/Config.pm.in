@@ -83,8 +83,8 @@ sub _lambda_env_needs_regen {
 
   close $fh;
 
-  if ( $first_line =~ /mapping \s v(\d+)/xsm ) {
-    return $TRUE if $1 != $mapping_version;
+  if ( $first_line =~ /mapping \s v(\S+)/xsm ) {
+    return $TRUE if $1 ne $mapping_version;
   }
   else {
     return $TRUE;
@@ -118,10 +118,20 @@ sub _generate_lambda_env {
 
   my $config = $yaml->[0];
 
+  my $trigger_type = _yaml_get( $config, 'trigger.type' );
+
   my @lines;
   my $prev_section;
 
   foreach my $entry ( @{ $mapping_doc->{mapping} } ) {
+
+    # Skip fields that don't apply to this project's trigger type (e.g.
+    # trigger.bucket/BUCKET_NAME is s3-sqs-only and must not block
+    # regeneration for an sns- or eventbridge-typed lambda.yaml).
+    if ( $entry->{applies_to} ) {
+      next if !defined $trigger_type || !grep { $_ eq $trigger_type } @{ $entry->{applies_to} };
+    }
+
     my $path  = $entry->{yaml};
     my $var   = $entry->{env};
     my $value = _yaml_get( $config, $path );
@@ -147,7 +157,7 @@ sub _generate_lambda_env {
   }
 
   my $header = sprintf <<'END_HEADER', $mapping_version;
-# lambda.env - GENERATED from lambda.yaml by alr-builder (mapping v%d)
+# lambda.env - GENERATED from lambda.yaml by alr-builder (mapping v%s)
 # Hand edits will be overwritten. Edit lambda.yaml instead, or
 # delete lambda.yaml to make this file hand-editable.
 END_HEADER
@@ -194,7 +204,12 @@ sub _walk_mapping {
 
   my $mapping_doc = $self->_load_mapping;
 
-  my $trigger_type = $mapping_doc->{trigger_types}[0];
+  # Use whatever trigger type is actually configured (TRIGGER_TYPE, mapped
+  # from trigger.type in lambda.yaml/lambda.env). Only fall back to the
+  # first entry in trigger_types when nothing has been configured yet
+  # (e.g. a brand new project with no lambda.env/lambda.yaml at all) so
+  # check-env-file still has something sensible to report against.
+  my $trigger_type = $provided->{TRIGGER_TYPE} // $mapping_doc->{trigger_types}[0];
 
   my ( @missing, @defaulted, @customized );
 

@@ -1,8 +1,10 @@
++Amazon::API 2.2.6
 Amazon::API::CloudWatchLogs 0
 Amazon::API::ECR 0
 Amazon::API::EventBridge 0
 Amazon::API::IAM 0
 Amazon::API::Lambda 0
+Amazon::API::SNS 2.2.4
 Amazon::API::SQS 0
 Amazon::API::STS 0
 Amazon::Credentials 0

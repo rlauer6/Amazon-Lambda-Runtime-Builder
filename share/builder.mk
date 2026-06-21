@@ -48,3 +48,10 @@ lambda-s3-pipeline:
 
 lambda-s3-teardown:
 	$(MAKE) -f $(ALR_BUILDER) lambda-s3-teardown
+
+lambda-sns-pipeline:
+	$(MAKE) -f $(ALR_BUILDER) lambda-sns-pipeline
+
+lambda-sns-teardown:
+	$(MAKE) -f $(ALR_BUILDER) lambda-sns-teardown
+

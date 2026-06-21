@@ -1,3 +1,59 @@
+Sun Jun 21 05:21:44 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.2.6]:
+	* VERSION: bump
+	* release-notes.md: updated
+	* release-notes/release-notes-1.2.6.md: new
+	* lib/Amazon/Lambda/Runtime/Builder/Role/SNS.pm.in: new
+	* lib/Amazon/Lambda/Runtime/Builder/Helper.pm.in
+	- add above role
+	(_scalar_or_array): return if undefined
+	(_parse_params)
+	- accept hashref of options for validation of args
+	(_handle_response)
+	- allow output of refs or scalars
+	(main)
+	- +create-topic, delete-topic, get-function-arn, get-topic, get-subscription
+	- +list-subscriptions, list-topics, publish, subscribe, unsubscribe
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Config.pm.in
+	(_lambda_env_needs_regen): alpha compare version
+	(_generate_lambda_env)
+	- skip fields that don't apply to trigger type
+	(_walk_mapping): use the trigger type configured
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Lambda.pm.in
+	(cmd_lambda_get_function_arn): new
+	(_lambda_get_function): new
+	(cmd_lambd_get_function): refactored
+	* share/Makefile.mk
+	- make sure lambda.env exists
+	- add sns to trigger type test
+	(image): exit if error
+	(ecr-repo): likewise
+	(policy-document): likewise
+	(lambda-policies): likewise
+	(lambda-role): likewise
+	(image-digest): likewise
+	(update-policies): likewise
+	(lambda-function)
+	- test for function name or blank, exit if error
+	(CLEANFILES): add sns sentinels
+	* share/builder.mk: add sns targets
+	* share/ecr-create-repo.mk
+	(ecr-uri): exit on error
+	(ecr-lifecycle-policy): likewise
+	* share/lambda-mapping.yml
+	- add sns trigger type
+	* share/sns.mk
+	(sns-topic): new
+	(lambda-sns-permission): new
+	(lambda-sns-trigger): new
+	(lambda-sns-pipeline): new
+	(lambda-sns-teardown): new
+	* share/sqs.mk
+	(sqs-queue-redrive): exit on error
+	(lambda-sqs-reponse-types): wrong arguments to list-eventsource-mappings
+
+
 Thu Jun 18 16:37:17 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.2.5]:

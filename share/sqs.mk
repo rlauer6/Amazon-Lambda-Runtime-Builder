@@ -34,7 +34,7 @@ $(CACHE_DIR)/sqs-queue-redrive: $(CACHE_DIR)/sqs-queue $(CACHE_DIR)/sqs-dlq | $(
 	        $(DLQ_NAME) \
 	        $(RECEIVE_COUNT) || exit 1; \
 	fi; \
-	echo "$(QUEUE_NAME)" > $@ && chmod 444 $@ || rm -f $@
+	echo "$(QUEUE_NAME)" > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 $(CACHE_DIR)/sqs-dlq: | $(CACHE_DIR) ## create dead letter queue
 	$(NO_ECHO)queue="$$(alr-helper list-queues | \
@@ -143,7 +143,7 @@ endif
 
 $(CACHE_DIR)/lambda-sqs-response-types: $(CACHE_DIR)/lambda-sqs-trigger lambda.env | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
-	uuid=$$(alr-helper list-eventsource-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | \
+	uuid=$$(alr-helper list-eventsource-mappings $(FUNCTION_NAME) $(QUEUE_NAME) | \
 	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}'); \
 	alr-helper wait-eventsource-mapping-enabled $$uuid; \
 	rsp="$$(alr-helper update-eventsource-mapping uuid:$$uuid $(RESPONSE_TYPES_ARG))"; \

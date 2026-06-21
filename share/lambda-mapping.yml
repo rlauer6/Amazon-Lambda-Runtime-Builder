@@ -1,4 +1,4 @@
-version: 1.3
+version: 1.4
 
 # trigger.type values this version of lambda-mapping.yml understands.
 # generate-yaml/init() validate lambda.yaml's trigger.type against this
@@ -7,6 +7,7 @@ trigger_types:
   - s3-sqs
   - s3-direct
   - eventbridge
+  - sns
 
 mapping:
   - yaml: image.repo
@@ -123,3 +124,9 @@ mapping:
     default: lambda-handler-rule
     applies_to:
       - eventbridge
+
+  - yaml: trigger.topic_name
+    env: TOPIC_NAME
+    required: true
+    applies_to:
+      - sns

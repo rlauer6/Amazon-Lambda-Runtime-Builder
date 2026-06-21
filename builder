@@ -17,7 +17,7 @@
 #
 ########################################################################
 
-INSTALLER="${INSTALLER:-cpm install -g}"
+INSTALLER="${INSTALLER:-cpm install -g --resolver 02packages,https://cpan.openbedrock.net/orepan2 }"
 
 ########################################################################
 function install_deps {
@@ -47,7 +47,9 @@ function install_deps {
     trap 'rm -f "$all_requires"' EXIT
 
     test -e requires && cat requires >> $all_requires
+    sed -i '/^ *$/d' build-requires 
     test -e build-requires && cat build-requires >> $all_requires
+    sed -i '/^ *$/d' test-requires 
     test -e test-requires && cat test-requires >> $all_requires
 
     perl -ne 'chomp;($m,$v)=split /(?:[@]|\s+)/,$_,2; $v //= q{}; $m=~s/^\+//; $v = $v eq q{0} ? q{} : $v; print qq{requires "$m", "$v";\n};' \
@@ -77,11 +79,13 @@ apt-get update && apt-get install -y \
    git \
    gcc \
    make \
+   sed \
    perl \
    curl \
    ca-certificates \
    libexpat-dev \
    libssl-dev \
+   libxml2-dev \
    libzip-dev
 
 if [[ "$INSTALLER" =~ cpm ]]; then

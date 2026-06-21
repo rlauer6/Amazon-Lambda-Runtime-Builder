@@ -1,10 +1,12 @@
-requires "Amazon::API::CloudWatchLogs", "0";
+requires "Amazon::API", "2.2.6";
+requires "Amazon::API::CloudWatchLogs", "2.2.6";
 requires "Amazon::API::ECR", "0";
 requires "Amazon::API::EventBridge", "0";
 requires "Amazon::API::IAM", "0";
 requires "Amazon::API::Lambda", "0";
+requires "Amazon::API::SNS", "2.2.4";
 requires "Amazon::API::SQS", "0";
-requires "Amazon::API::STS", "0";
+requires "Amazon::API::STS", "2.2.6";
 requires "Amazon::Credentials", "0";
 requires "Amazon::S3::Lite", "0";
 requires "CLI::Simple", "0";
