@@ -26,15 +26,12 @@ COPY cpanfile /usr/src/app
 
 RUN --mount=type=cache,target=/cache/local-debian \
   rsync -a /usr/src/app/local/ /cache/local-debian && \
-  cpm install -L /cache/local-debian ${RESOLVER} && \
+  PERL5LIB=/cache/local-debian/lib/perl5 cpm install --show-build-log-on-failure --use-install-command -L /cache/local-debian ${RESOLVER} && \
   rm -rf /usr/src/app/local && \
   cp -a /cache/local-debian /usr/src/app/local
 
 COPY ${DIST_TARBALL} /usr/src/app/
 RUN cpm install -L /usr/src/app/local ${RESOLVER} ${DIST_TARBALL}
-
-ARG DARKPAN_REBUILD=0
-RUN cpm install --show-build-log-on-failure -L /usr/src/app/local ${RESOLVER}
 
 ########################################################################
 FROM debian:trixie-slim

@@ -1,0 +1,60 @@
+package Amazon::Lambda::Runtime::Builder::Role::CloudFront;
+
+use strict;
+use warnings;
+
+use CLI::Simple::Utils qw(slurp_json);
+use CLI::Simple::Constants qw(:booleans);
+use Data::Dumper;
+use Data::UUID;
+use English qw(-no_match_vars);
+
+use Role::Tiny;
+
+{
+  my $cloudfront;
+
+########################################################################
+  sub _cloudfront {
+########################################################################
+    my ($self) = @_;
+
+    return $cloudfront
+      if $cloudfront;
+
+    require Amazon::API::CloudFront;
+
+    $cloudfront = Amazon::API::CloudFront->new( log_level => $self->get_log_level );
+
+    return $cloudfront;
+  }
+}
+
+########################################################################
+sub cmd_cloudfront_create_invalidation {
+########################################################################
+  my ($self) = @_;
+
+  my ( $distribution_id, @paths ) = $self->get_args;
+
+  die "ERROR: usage: alr-help create-invalidation path ...\n"
+    if !$distribution_id;
+
+  my $reference = Data::UUID->new->create_str;
+
+  my $rsp = $self->_cloudfront->CreateInvalidation(
+    { DistributionId    => $distribution_id,
+      InvalidationBatch => {
+        CallerReference => $reference,
+        Paths           => {
+          Quantity => scalar @paths,
+          Items    => \@paths,
+        },
+      }
+    }
+  );
+
+  return $self->_handle_response($rsp);
+}
+
+1;

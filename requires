@@ -1,4 +1,5 @@
 +Amazon::API 2.2.6
+Amazon::API::CloudFront 2.2.6
 Amazon::API::CloudWatchLogs 0
 Amazon::API::ECR 0
 Amazon::API::EventBridge 0
@@ -14,6 +15,7 @@ CLI::Simple::Constants 0
 CLI::Simple::Utils 0
 CPAN::Meta 2.150010
 Carp::Always 0.16
+Data::UUID 1.227
 File::ShareDir 1.118
 File::Which 1.27
 JSON 4.10

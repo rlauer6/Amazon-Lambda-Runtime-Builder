@@ -55,3 +55,18 @@ lambda-sns-pipeline:
 lambda-sns-teardown:
 	$(MAKE) -f $(ALR_BUILDER) lambda-sns-teardown
 
+update-policies:
+	$(MAKE) -f $(ALR_BUILDER) update-policies
+
+update-managed-policies:
+	$(MAKE) -f $(ALR_BUILDER) update-managed-policies
+
+update-inline-policies:
+	$(MAKE) -f $(ALR_BUILDER) update-inline-policies
+
+lambda-managed-policies:
+	$(MAKE) -f $(ALR_BUILDER) lambda-managed-policies
+
+lambda-inline-policies:
+	$(MAKE) -f $(ALR_BUILDER) lambda-inline-policies
+

@@ -78,7 +78,8 @@ $(CACHE_DIR)/sqs-queue-policy: $(CACHE_DIR)/sqs-queue | $(CACHE_DIR) ## grant S3
 	chmod 444 $@
 
 $(CACHE_DIR)/lambda-concurrency: $(CACHE_DIR)/lambda-function | $(CACHE_DIR) ## set Lambda reserved concurrency to 1 for serial indexing
-	$(NO_ECHO)alr-helper put-function-concurrency $(FUNCTION_NAME) $(CONCURRENCY) || exit 1; \
+	$(NO_ECHO)chmod -f 644 $@ || true; \
+	alr-helper put-function-concurrency $(FUNCTION_NAME) $(CONCURRENCY) || exit 1; \
 	echo "$(FUNCTION_NAME)" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
 
@@ -87,7 +88,8 @@ $(CACHE_DIR)/lambda-sqs-trigger: \
     $(CACHE_DIR)/sqs-queue \
     $(CACHE_DIR)/sqs-queue-redrive \
     $(CACHE_DIR)/lambda-sqs-permission | $(CACHE_DIR)
-	$(NO_ECHO)trigger="$$(alr-helper list-eventsource-mappings \
+	$(NO_ECHO)chmod -f 644 $@ || true; \
+	trigger="$$(alr-helper list-eventsource-mappings \
 	    $(FUNCTION_NAME) \
 	    queue:$(QUEUE_NAME) | \
 	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}')"; \

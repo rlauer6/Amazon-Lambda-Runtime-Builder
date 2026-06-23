@@ -4,10 +4,11 @@ use strict;
 use warnings;
 
 use CLI::Simple::Constants qw(:booleans);
-use CLI::Simple::Utils qw(choose slurp slurp_json);
+use CLI::Simple::Utils qw(choose slurp slurp_json to_snake_case);
 use Data::Dumper;
 use English qw(-no_match_vars);
 use JSON;
+use Scalar::Util qw(reftype);
 
 use Role::Tiny;
 
@@ -60,6 +61,90 @@ sub cmd_iam_delete_role {
   my $rsp = eval { $iam->DeleteRole( { RoleName => $role_name } ); };
 
   return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_iam_put_role_policies {
+########################################################################
+  my ($self) = @_;
+
+  my $iam = $self->_iam;
+
+  my (@args) = $self->get_args;
+
+  my $params = $self->_parse_params(@args);
+
+  my ( $role_name, $policy_document ) = @{$params}{qw(RoleName PolicyDocument)};
+
+  foreach (qw(RoleName PolicyDocument)) {
+    die sprintf "ERROR: %s is a required argument\n", to_snake_case($_)
+      if !$params->{$_};
+  }
+
+  my $policies = eval {
+    if ( $policy_document =~ /^file:\/\/(.+)$/xsm ) {
+      return slurp_json($1);
+    }
+
+    die "policy-document should be a file path (file://policy.json)\n";
+  };
+
+  die "ERROR: $EVAL_ERROR"
+    if !$policies;
+
+  die "ERROR: the policy document should be an array of policies\n"
+    if reftype($policies) ne 'ARRAY';
+
+  my @policy_names;
+
+  foreach my $p ( @{$policies} ) {
+    my $policy_name = delete $p->{PolicyName};
+
+    die "ERROR: every policy must have a PolicyName\n"
+      if !$policy_name;
+
+    die "ERROR: missing PolicyDocument in policy '$policy_name'\n"
+      if !$p->{PolicyDocument};
+
+    my $document = eval { encode_json( $p->{PolicyDocument} ) };  # shouldn't happen
+
+    die "ERROR: unable to encode policy document\n$EVAL_ERROR"
+      if !$document;
+
+    my $rsp = eval {
+      return $iam->PutRolePolicy(
+        { RoleName       => $role_name,
+          PolicyDocument => $document,
+          PolicyName     => $policy_name,
+        }
+      );
+    };
+
+    die $EVAL_ERROR
+      if $EVAL_ERROR;
+
+    push @policy_names, $policy_name;
+  }
+
+  my @policies;
+
+  eval {
+    require URI::Escape;
+
+    foreach my $policy_name (@policy_names) {
+      my $rsp = $self->_iam_get_role_policy( $role_name, $policy_name );
+
+      delete $rsp->{RoleName};
+
+      if ( $rsp->{PolicyDocument} ) {
+        $rsp->{PolicyDocument} = decode_json( URI::Escape::uri_unescape( $rsp->{PolicyDocument} ) );
+      }
+
+      push @policies, $rsp;
+    }
+  };
+
+  return $self->_handle_response( \@policies );
 }
 
 ########################################################################
@@ -257,6 +342,16 @@ sub cmd_iam_attach_role_policy {
   }
 
   return $self->cmd_iam_list_attached_policies;
+}
+
+########################################################################
+sub _iam_get_role_policy {
+########################################################################
+  my ( $self, $role_name, $policy_name ) = @_;
+
+  my $iam = $self->_iam;
+
+  return $iam->GetRolePolicy( { RoleName => $role_name, PolicyName => $policy_name } );
 }
 
 ########################################################################

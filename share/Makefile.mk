@@ -80,6 +80,9 @@ lambda-sqs-trigger:         $(CACHE_DIR)/lambda-sqs-trigger
 lambda-eventbridge-trigger: $(CACHE_DIR)/lambda-eventbridge-trigger
 sns:                        $(CACHE_DIR)/sns
 tarball-validated:          $(CACHE_DIR)/tarball-validated
+lambda-managed-policies:    $(CACHE_DIR)/lambda-managed-policies
+lambda-inline-policies:     $(CACHE_DIR)/lambda-inline-policies
+
 update-function:            lambda-function ## update Lambda function code to latest image
 
 $(CACHE_DIR):
@@ -174,7 +177,8 @@ export s_create_assume_policy = $(value create_assume_role_policy)
 ########################################################################
 
 $(CACHE_DIR)/policy-document: | $(CACHE_DIR)
-	$(NO_ECHO)alr-helper create-assume-policy lambda.amazonaws.com > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
+	$(NO_ECHO)chmod -f 644 $@ || true; \
+	alr-helper create-assume-policy lambda.amazonaws.com > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 $(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
@@ -185,7 +189,8 @@ $(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
 	    alr-helper create-role $(ROLE_NAME) $< > $@ && chmod 444 $@ || { rm -f $@; exit 1; }; \
 	fi
 
-POLICIES_FILE ?= policies
+POLICIES_FILE        ?= policies
+CUSTOM_POLICIES_FILE ?= custom-policies.json
 
 ifeq ($(ROLE_PROFILE),)
   ifeq ($(wildcard $(POLICIES_FILE)),)
@@ -199,14 +204,35 @@ else
   POLICIES_PREREQ     = $(LAMBDA_ENV)
 endif
 
-$(CACHE_DIR)/lambda-policies: $(CACHE_DIR)/lambda-role $(POLICIES_PREREQ) | $(CACHE_DIR)
+$(CACHE_DIR)/lambda-managed-policies: $(CACHE_DIR)/lambda-role $(POLICIES_PREREQ) | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	policies=$$(mktemp); trap 'rm -f $$policies' EXIT; \
 	$(ATTACH_POLICIES_CMD) > $$policies && cp $$policies $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
+$(CACHE_DIR)/lambda-inline-policies: $(CACHE_DIR)/lambda-role $(wildcard $(CUSTOM_POLICIES_FILE)) | $(CACHE_DIR)
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	if [[ -e "$(CUSTOM_POLICIES_FILE)" ]]; then \
+	  alr-helper put-role-policies role-name:$(ROLE_NAME) policy-document:file://$(CUSTOM_POLICIES_FILE) || { rm -f $@; exit 1; }; \
+	fi; \
+	echo "$(CUSTOM_POLICIES_FILE)" > $@ && chmod 444 $@
+
+$(CACHE_DIR)/lambda-policies: $(CACHE_DIR)/lambda-managed-policies $(CACHE_DIR)/lambda-inline-policies | $(CACHE_DIR)
+	$(NO_ECHO)touch $@ && chmod 444 $@
+
+.PHONY: update-managed-policies
+update-managed-policies: $(POLICIES_PREREQ) ## re-attach AWS managed IAM policies
+	$(NO_ECHO)chmod -f 644 $(CACHE_DIR)/lambda-managed-policies 2>/dev/null || true; \
+	rm -f $(CACHE_DIR)/lambda-managed-policies; \
+	$(MAKE) -f $(firstword $(MAKEFILE_LIST)) $(CACHE_DIR)/lambda-managed-policies
+
+.PHONY: update-inline-policies
+update-inline-policies: ## re-apply custom inline IAM policies from $(CUSTOM_POLICIES_FILE)
+	$(NO_ECHO)chmod -f 644 $(CACHE_DIR)/lambda-inline-policies 2>/dev/null || true; \
+	rm -f $(CACHE_DIR)/lambda-inline-policies; \
+	$(MAKE) -f $(firstword $(MAKEFILE_LIST)) $(CACHE_DIR)/lambda-inline-policies
+
 .PHONY: update-policies
-update-policies: $(POLICIES_PREREQ) ## re-attach IAM policies (from role.profile via $(LAMBDA_ENV), or from policies file)
-	$(NO_ECHO)$(MAKE) $(CACHE_DIR)/lambda-policies
+update-policies: update-managed-policies update-inline-policies ## re-attach all IAM policies (managed + custom inline)
 
 ########################################################################
 # create/update Lambda function
@@ -331,6 +357,8 @@ CLEANFILES = \
     $(CACHE_DIR)/lambda-function-url-permission \
     $(CACHE_DIR)/lambda-function-url-invoke-permission \
     $(CACHE_DIR)/lambda-policies \
+    $(CACHE_DIR)/lambda-managed-policies \
+    $(CACHE_DIR)/lambda-inline-policies \
     $(CACHE_DIR)/lambda-role \
     $(CACHE_DIR)/lambda-s3-permission \
     $(CACHE_DIR)/lambda-eventbridge-rule \
@@ -374,6 +402,8 @@ clean: ## remove all generated sentinels and docker artifacts
     image \
     invoke \
     update-policies \
+    update-managed-policies \
+    update-inline-policies \
     lambda-s3-trigger \
     lambda-sqs-trigger \
     lambda-sns-trigger \

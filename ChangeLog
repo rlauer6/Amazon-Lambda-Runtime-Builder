@@ -1,3 +1,44 @@
+Mon Jun 22 15:18:03 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.2.7]:
+	* VERSION: bump
+	* release-notes.md: updated
+	* release-notes/release-notes-1.2.7.md: new
+	* lib/Amazon/Lambda/Runtime/Builder/Role/CloudFront.pm.in: new
+	* requires
+	-  set version 2.2.6 for all
+	- +Data::UUID
+	* cpanfile: likewise
+	* lib/Amazon/Lambda/Runtime/Builder/Helper.pm.in
+	(_parse_params)
+	- handle file:// as a passthrough
+	(main)
+	- add commands put-role-policy, create-invalidation
+	* lib/Amazon/Lambda/Runtime/Builder/Role/IAM.pm.in
+	(cmd_iam_put_role_polices): new
+	(_iam_get_role_policy): new
+	* share/Dockerfile
+	- cpm --use-install-command, set PERL5LIB so ParseDetails.ini gets created
+	* share/Makefile.mk
+	- add targets lambda-managed-policies, lambda-inline-policies
+	(policy_document): make target rw
+	(CUSTOM_POLICIES): new
+	(lambda-managed_policies): new
+	(lambda-inline-policies): new
+	(update-managed_policies): new
+	(update-inline-policies): new
+	(update-policies): depends on above
+	(CLEANFILES)
+	- +lambda-managed-policies, lambda-inline-policies
+	- +update-managed-policies, update-inline-policies
+	* share/builder.mk
+	- +update-policies, update-managed-policies, update-inline-policies
+	- +lambda-managed-policies, lambda-inline-policies
+	* share/sqs.mk
+	(lambda-concurrency): set target to rw
+	(lambda-sqs-trigger); likewise
+
+
 Sun Jun 21 05:21:44 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.2.6]:

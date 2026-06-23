@@ -13,6 +13,7 @@ use List::Util qw(none);
 use Scalar::Util qw(reftype);
 
 use Role::Tiny::With;
+with 'Amazon::Lambda::Runtime::Builder::Role::CloudFront';
 with 'Amazon::Lambda::Runtime::Builder::Role::ECR';
 with 'Amazon::Lambda::Runtime::Builder::Role::Events';
 with 'Amazon::Lambda::Runtime::Builder::Role::IAM';
@@ -109,6 +110,10 @@ sub _parse_params {
 
         die "ERROR: invalid parameter '$p' - if the value contains a colon (ARN, URL), use '=' instead: key=value\n"
           if @parts > 3;
+
+        if ( $parts[1] eq 'file' && $parts[2] =~ /^\/\/(.+)$/xsm ) {
+          return ( $parts[0], sprintf 'file://%s', $1 );
+        }
 
         my ($parameter) = toPascalCase( $parts[1] );
 
@@ -303,21 +308,21 @@ sub init {
 sub main {
 ########################################################################
   my %commands = (
-    'add-permission'               => \&cmd_lambda_add_permission,
-    'attach-policies-from-profile' => \&cmd_attach_policies_from_profile,
-    'attach-policy'                => \&cmd_iam_attach_role_policy,
-    'check'                        => \&cmd_check,
-    'create-assume-policy'         => \&cmd_create_assume_policy,
-    'create-bucket'                => \&cmd_s3_create_bucket,
-    'create-cpanfile'              => \&cmd_create_cpanfile,
-    'create-eventsource-mappings'  => \&cmd_lambda_create_eventsource_mappings,
-    'create-function'              => \&cmd_lambda_create_function,
-    'create-function-url-config'   => \&cmd_lambda_create_function_url_config,
-    'create-queue'                 => \&cmd_sqs_create_queue,
-    'create-repository'            => \&cmd_ecr_create_repository,
-    'create-role'                  => \&cmd_iam_create_role,
-    'create-topic'                 => \&cmd_sns_create_topic,
-
+    'add-permission'                   => \&cmd_lambda_add_permission,
+    'attach-policies-from-profile'     => \&cmd_attach_policies_from_profile,
+    'attach-policy'                    => \&cmd_iam_attach_role_policy,
+    'check'                            => \&cmd_check,
+    'create-assume-policy'             => \&cmd_create_assume_policy,
+    'create-bucket'                    => \&cmd_s3_create_bucket,
+    'create-cpanfile'                  => \&cmd_create_cpanfile,
+    'create-eventsource-mappings'      => \&cmd_lambda_create_eventsource_mappings,
+    'create-function'                  => \&cmd_lambda_create_function,
+    'create-function-url-config'       => \&cmd_lambda_create_function_url_config,
+    'create-invalidation'              => \&cmd_cloudfront_create_invalidation,
+    'create-queue'                     => \&cmd_sqs_create_queue,
+    'create-repository'                => \&cmd_ecr_create_repository,
+    'create-role'                      => \&cmd_iam_create_role,
+    'create-topic'                     => \&cmd_sns_create_topic,
     'delete-eventsource-mappings'      => \&cmd_lambda_delete_eventsource_mappings,
     'delete-function'                  => \&cmd_lambda_delete_function,
     'delete-function-url-config'       => \&cmd_lambda_delete_function_url_config,
@@ -364,6 +369,7 @@ sub main {
     'put-function-concurrency'         => \&cmd_lambda_put_function_concurrency,
     'put-lambda-target'                => \&cmd_eventbridge_put_lambda_target,
     'put-lifecycle-policy'             => \&cmd_ecr_put_lifecycle_policy,
+    'put-role-policies'                => \&cmd_iam_put_role_policies,
     'put-rule-expression'              => \&cmd_eventbridge_put_rule_expression,
     'put-rule-pattern'                 => \&cmd_eventbridge_put_rule_pattern,
     'purge-queue'                      => \&cmd_sqs_purge_queue,
