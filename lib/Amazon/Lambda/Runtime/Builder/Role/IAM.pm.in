@@ -8,7 +8,7 @@ use CLI::Simple::Utils qw(choose slurp slurp_json to_snake_case);
 use Data::Dumper;
 use English qw(-no_match_vars);
 use JSON;
-use Scalar::Util qw(reftype);
+use Scalar::Util qw(reftype blessed);
 
 use Role::Tiny;
 
@@ -309,7 +309,52 @@ sub cmd_iam_create_role {
 
   my $rsp = eval { $iam->CreateRole( { RoleName => $role_name, AssumeRolePolicyDocument => $document } ); };
 
+  if ( $self->get_wait ) {
+    $self->_wait_create_role($role_name);
+  }
+
   return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub _wait_create_role {
+########################################################################
+  my ( $self, $role_name ) = @_;
+
+  eval {
+    local $SIG{ALRM} = sub { die "timed out\n"; };
+
+    if ( $self->get_wait ) {
+      alarm $self->get_wait;
+    }
+
+    while ( $TRUE && $self->get_wait ) {
+      my $rsp = eval { $self->_iam_get_role($role_name); };
+      $self->get_logger->info( Dumper( [ rsp => $rsp ] ) );
+
+      last if $rsp;
+
+      die $EVAL_ERROR
+        if !blessed($EVAL_ERROR) || $EVAL_ERROR->get_error ne '404';
+
+      sleep 1;
+    }
+
+    alarm 0;
+  };
+
+  if ($EVAL_ERROR) {
+    if ( $EVAL_ERROR =~ /timed\sout/xsm ) {
+      print {*STDERR} "timed out waiting for role: $role_name to be create\n";
+    }
+    else {
+      print {*STDERR} $EVAL_ERROR;
+    }
+
+    return $FAILURE;
+  }
+
+  return $SUCCESS;
 }
 
 ########################################################################

@@ -8,6 +8,7 @@ trigger_types:
   - s3-direct
   - eventbridge
   - sns
+  - alb
 
 mapping:
   - yaml: image.repo
@@ -44,6 +45,9 @@ mapping:
   - yaml: trigger.type
     env: TRIGGER_TYPE
     required: true
+
+  - yaml: overlay
+    env: OVERLAY
 
   - yaml: trigger.bucket
     env: BUCKET_NAME
@@ -130,3 +134,21 @@ mapping:
     required: true
     applies_to:
       - sns
+
+  - yaml: trigger.listener_arn
+    env: LISTENER_ARN
+    required: true
+    applies_to:
+      - alb
+
+  - yaml: trigger.path
+    env: ALB_PATH
+    default: '/build'
+    applies_to:
+      - alb
+
+  - yaml: trigger.priority
+    env: RULE_PRIORITY
+    default: 10
+    applies_to:
+      - alb

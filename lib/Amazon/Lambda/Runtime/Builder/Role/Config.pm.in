@@ -260,17 +260,36 @@ sub _validate_constraints {
 
   my @warnings;
 
-  if ( ( $provided->{TRIGGER_TYPE} // q{} ) eq 's3-sqs' ) {
-    my $timeout    = $provided->{TIMEOUT}            // 0;
-    my $visibility = $provided->{VISIBILITY_TIMEOUT} // 0;
+  my $trigger_type = $provided->{TRIGGER_TYPE};
 
-    if ( $visibility < $timeout * 6 ) {
-      push @warnings,
-        sprintf 'VISIBILITY_TIMEOUT (%d) should be at least 6x TIMEOUT (%d) - recommended minimum is %d seconds',
-        $visibility, $timeout, $timeout * 6;
-    }
+  my %check = (
+    alb => sub {
+      my ($provided) = @_;
+      my $listener_arn = $provided->{LISTENER_ARN} // q{};
 
-  }
+      if ( $listener_arn !~ /^arn:aws:elasticloadbalancing:/xsm ) {
+        push @warnings, sprintf 'LISTENER_ARN (%s) does not look like a valid ELBv2 listener ARN', $listener_arn;
+      }
+
+      return;
+    },
+    's3-sqs' => sub {
+      my ($provided) = @_;
+
+      my $timeout    = $provided->{TIMEOUT}            // 0;
+      my $visibility = $provided->{VISIBILITY_TIMEOUT} // 0;
+
+      if ( $visibility < $timeout * 6 ) {
+        push @warnings,
+          sprintf 'VISIBILITY_TIMEOUT (%d) should be at least 6x TIMEOUT (%d) - recommended minimum is %d seconds',
+          $visibility, $timeout, $timeout * 6;
+      }
+
+      return;
+    },
+  );
+
+  $check{$trigger_type}->($provided);
 
   return @warnings;
 }
@@ -290,7 +309,8 @@ sub cmd_generate_yaml {
     if -e $yaml_file;
 
   my %provided = $self->_read_lambda_env;
-  my $result   = $self->_walk_mapping( \%provided );
+
+  my $result = $self->_walk_mapping( \%provided );
 
   if ( @{ $result->{missing} } ) {
     my @names = map { sprintf '%s (%s)', $_->{env}, $_->{yaml} } @{ $result->{missing} };

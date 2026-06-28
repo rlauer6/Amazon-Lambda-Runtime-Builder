@@ -7,11 +7,9 @@ ecr-repo: $(CACHE_DIR)/ecr-repo
 ecr-lifecycle-policy: $(CACHE_DIR)/ecr-lifecycle-policy
 
 $(CACHE_DIR)/ecr-uri: | $(CACHE_DIR)
-	$(NO_ECHO)repo_uri=$$(alr-helper describe-repositories $(REPO_NAME) 2>/dev/null | \
-	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{repositories}[0]{repositoryUri}//"" '); \
+	$(NO_ECHO)repo_uri="$$(alr-helper describe-repositories $(REPO_NAME) filter=repositories[0].repositoryUri 2>/dev/null)"; \
 	if [[ -z "$$repo_uri" ]] || echo "$$repo_uri" | grep -qv "$(REPO_NAME)"; then \
-	  repo_uri=$$(alr-helper create-repository $(REPO_NAME) | \
-	    perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{repository}{repositoryUri}'); \
+	  repo_uri="$$(alr-helper create-repository $(REPO_NAME) filter=repository.repositoryUri)"; \
 	fi; \
 	if [[ -z "$$repo_uri" ]]; then \
 	  echo "ERROR: could not determine ECR repository URI for $(REPO_NAME)" >&2; \

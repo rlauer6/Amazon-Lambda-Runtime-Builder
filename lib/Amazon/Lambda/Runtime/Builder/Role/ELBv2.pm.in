@@ -1,0 +1,242 @@
+package Amazon::Lambda::Runtime::Builder::Role::ELBv2;
+
+use strict;
+use warnings;
+
+use CLI::Simple::Constants qw(:booleans);
+use Data::Dumper;
+use English qw(-no_match_vars);
+use JSON qw(encode_json);
+use Role::Tiny;
+use Scalar::Util qw(blessed);
+
+{
+  my $elbv2;
+
+########################################################################
+  sub _elbv2 {
+########################################################################
+    my ($self) = @_;
+
+    return $elbv2
+      if $elbv2;
+
+    require Amazon::API::ELBv2;
+
+    $elbv2 = Amazon::API::ELBv2->new( log_level => $self->get_log_level );
+
+    return $elbv2;
+  }
+}
+
+########################################################################
+sub cmd_elbv2_describe_load_balancers {
+########################################################################
+  my ($self) = @_;
+
+  my (@args) = $self->get_args;
+
+  my $params = $self->_parse_params( { parameters => \@args, pascal => $FALSE } );
+
+  my $filter = $params->{filter};
+
+  my $rsp = eval { $self->_elbv2->DescribeLoadBalancers( {} ); };
+
+  return $self->_handle_response( $rsp, $filter );
+}
+
+########################################################################
+sub cmd_elbv2_describe_listeners {
+########################################################################
+  my ($self) = @_;
+
+  my ($load_balancer_arn) = $self->get_args;
+
+  my $rsp = eval { $self->_elbv2->DescribeListeners( { LoadBalancerArn => $load_balancer_arn } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_elbv2_get_alb_target_group {
+########################################################################
+  my ($self) = @_;
+
+  my ($name) = $self->get_args;
+
+  die "ERROR: usage: get-alb-target-group name\n"
+    if !$name;
+
+  my $tg = eval {
+    my $rsp = $self->_elbv2->DescribeTargetGroups( { Names => [$name] } );
+    return $rsp->{TargetGroups}[0];
+  };
+
+  if ( $EVAL_ERROR && blessed $EVAL_ERROR ) {
+    if ( $EVAL_ERROR->get_error eq '400' ) {
+      $EVAL_ERROR = q{};
+    }
+  }
+
+  return $self->_handle_response( $tg ? encode_json($tg) : q{} );
+}
+
+########################################################################
+sub cmd_elbv2_create_alb_target_group {
+########################################################################
+  my ($self) = @_;
+
+  my ($name) = $self->get_args;
+
+  die "ERROR: usage: create-alb-target-group name\n"
+    if !$name;
+
+  my $rsp = $self->_elbv2->CreateTargetGroup(
+    { Name       => $name,
+      TargetType => 'lambda',
+    }
+  );
+
+  my $tg = eval { $rsp->{TargetGroups}[0] };
+
+  return $self->_handle_response($tg);
+}
+
+########################################################################
+sub cmd_elbv2_register_alb_target {
+########################################################################
+  my ($self) = @_;
+
+  my ( $tg_arn, $function_name ) = $self->get_args;
+
+  die "ERROR: usage: register-alb-target tg-arn function-name\n"
+    if !$tg_arn || !$function_name;
+
+  my $lambda       = $self->_lambda;
+  my $function     = $self->_lambda_get_function($function_name);
+  my $function_arn = $function->{Configuration}{FunctionArn};
+
+  my $rsp = eval { $self->_elbv2->RegisterTargets( { TargetGroupArn => $tg_arn, Targets => [ { Id => $function_arn } ], } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_elbv2_deregister_alb_target {
+########################################################################
+  my ($self) = @_;
+
+  my ( $tg_arn, $function_name ) = $self->get_args;
+
+  die "ERROR: usage: deregister-alb-target tg-arn function-name\n"
+    if !$tg_arn || !$function_name;
+
+  my $function     = $self->_lambda_get_function($function_name);
+  my $function_arn = $function->{Configuration}{FunctionArn};
+
+  my $rsp
+    = eval { $self->_elbv2->DeregisterTargets( { TargetGroupArn => $tg_arn, Targets => [ { Id => $function_arn } ], } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_elbv2_delete_alb_target_group {
+########################################################################
+  my ($self) = @_;
+
+  my ($tg_arn) = $self->get_args;
+
+  die "ERROR: usage: delete-alb-target-group tg-arn\n"
+    if !$tg_arn;
+
+  my $rsp = eval { $self->_elbv2->DeleteTargetGroup( { TargetGroupArn => $tg_arn } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_elbv2_get_alb_listener_rule {
+########################################################################
+  my ($self) = @_;
+
+  my ( $listener_arn, $path ) = $self->get_args;
+
+  die "ERROR: usage: get-alb-listener-rule listener-arn path\n"
+    if !$listener_arn || !$path;
+
+  my ($rule) = eval {
+    my $rsp = $self->_elbv2->DescribeRules( { ListenerArn => $listener_arn } );
+
+    return grep {
+      my $conditions = $_->{Conditions} // [];
+      grep {
+        $_->{Field} eq 'path-pattern'
+          && grep { $_ eq $path }
+          @{ $_->{Values} // [] }
+      } @{$conditions}
+    } @{ $rsp->{Rules} // [] };
+  };
+
+  if ( $EVAL_ERROR && blessed $EVAL_ERROR ) {
+    if ( $EVAL_ERROR->get_error eq '400' ) {
+      $EVAL_ERROR = q{};
+    }
+  }
+
+  return $self->_handle_response( $rule ? encode_json($rule) : q{} );
+}
+
+########################################################################
+sub cmd_elbv2_create_alb_listener_rule {
+########################################################################
+  my ($self) = @_;
+
+  my ( $listener_arn, $tg_arn, @kv ) = $self->get_args;
+
+  die "ERROR: usage: create-alb-listener-rule listener-arn tg-arn path:PATH priority:N\n"
+    if !$listener_arn || !$tg_arn;
+
+  my %args = map { split /:/xsm, $_, 2 } @kv;
+
+  my $path     = $args{path}     // '/';
+  my $priority = $args{priority} // 10;
+
+  my $rule = eval {
+    my $rsp = $self->_elbv2->CreateRule(
+      { ListenerArn => $listener_arn,
+        Priority    => $priority + 0,
+        Conditions  => [
+          { Field  => 'path-pattern',
+            Values => [$path],
+          }
+        ],
+        Actions => [
+          { Type           => 'forward',
+            TargetGroupArn => $tg_arn,
+          }
+        ],
+      }
+    );
+    return $rsp->{Rules}[0];
+  };
+
+  return $self->_handle_response($rule);
+}
+
+########################################################################
+sub cmd_elbv2_delete_alb_listener_rule {
+########################################################################
+  my ($self) = @_;
+
+  my ($rule_arn) = $self->get_args;
+
+  die "ERROR: usage: delete-alb-listener-rule rule-arn\n"
+    if !$rule_arn;
+
+  my $rsp = eval { $self->_elbv2->DeleteRule( { RuleArn => $rule_arn } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+1;

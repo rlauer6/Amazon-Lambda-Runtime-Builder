@@ -70,3 +70,11 @@ lambda-managed-policies:
 lambda-inline-policies:
 	$(MAKE) -f $(ALR_BUILDER) lambda-inline-policies
 
+lambda-alb-pipeline:
+	$(MAKE) -f $(ALR_BUILDER) lambda-alb-pipeline
+
+lambda-alb-teardown:
+	$(MAKE) -f $(ALR_BUILDER) lambda-alb-teardown
+
+overlay:
+	$(MAKE) -f $(ALR_BUILDER) overlay

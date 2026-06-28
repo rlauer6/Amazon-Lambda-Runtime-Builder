@@ -8,6 +8,7 @@ use Data::Dumper;
 use English qw(-no_match_vars);
 use JSON;
 use Role::Tiny;
+use Scalar::Util qw(blessed);
 
 {
   my $ecr;
@@ -33,13 +34,15 @@ sub cmd_ecr_create_repository {
 ########################################################################
   my ($self) = @_;
 
-  my ($repo_name) = $self->get_args;
+  my ( $repo_name, @args ) = $self->get_args;
+
+  my $params = $self->_parse_params( { parameters => \@args, pascal => $FALSE } );
 
   my $ecr = $self->_ecr;
 
   my $rsp = eval { return $ecr->CreateRepository( { repositoryName => $repo_name } ); };
 
-  return $self->_handle_response($rsp);
+  return $self->_handle_response( $rsp, $params->{filter} );
 }
 
 ########################################################################
@@ -47,13 +50,23 @@ sub cmd_ecr_describe_repositories {
 ########################################################################
   my ($self) = @_;
 
-  my ($repo_name) = $self->get_args;
+  my ( $repo_name, @args ) = $self->get_args;
+
+  my $params = $self->_parse_params( { parameters => \@args, pascal => $FALSE } );
+
+  my $filter = $params->{filter};
 
   my $ecr = $self->_ecr;
 
   my $rsp = eval { return $ecr->DescribeRepositories( { repositoryNames => [$repo_name] } ); };
 
-  return $self->_handle_response($rsp);
+  if ( $EVAL_ERROR && blessed $EVAL_ERROR ) {
+    if ( $EVAL_ERROR->get_message_raw =~ /does\snot\sexist/xsm ) {
+      $rsp = $EVAL_ERROR = q{};
+    }
+  }
+
+  return $self->_handle_response( $rsp, $filter );
 }
 
 ########################################################################
@@ -153,20 +166,22 @@ sub cmd_ecr_describe_images {
 ########################################################################
   my ($self) = @_;
 
-  my ($repo_name) = $self->get_args;
+  my ( $repo_name, @args ) = $self->get_args;
+
+  my $params = $self->_parse_params( { parameters => \@args, pascal => $FALSE } );
+
+  my $filter = $params->{filter};
 
   my $ecr = $self->_ecr;
 
   my $rsp = eval { return $ecr->DescribeImages( { repositoryName => $repo_name } ); };
 
-  if ( !$rsp ) {
-    print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
-  }
+  return $self->_handle_response($rsp)
+    if $EVAL_ERROR || !$rsp;
 
   my ($image_details) = reverse sort { $a->{imagePushedAt} cmp $b->{imagePushedAt} } @{ $rsp->{imageDetails} || [] };
 
-  print {*STDOUT} JSON->new->pretty->encode($image_details);
+  return $self->_handle_response( $image_details, $filter );
 
   return $SUCCESS;
 }

@@ -16,6 +16,7 @@ use Role::Tiny::With;
 with 'Amazon::Lambda::Runtime::Builder::Role::CloudFront';
 with 'Amazon::Lambda::Runtime::Builder::Role::ECR';
 with 'Amazon::Lambda::Runtime::Builder::Role::Events';
+with 'Amazon::Lambda::Runtime::Builder::Role::ELBv2';
 with 'Amazon::Lambda::Runtime::Builder::Role::IAM';
 with 'Amazon::Lambda::Runtime::Builder::Role::Lambda';
 with 'Amazon::Lambda::Runtime::Builder::Role::Logs';
@@ -61,18 +62,22 @@ sub _parse_params {
   my @required_params;
   my @valid_params;
   my $allow_file;
+  my %options;
 
   if ( ref $args[0] && reftype( $args[0] ) eq 'HASH' ) {
-    @params = @{ $args[0]->{parameters} // [] };
+    %options = %{ $args[0] };
+    @params  = @{ $options{parameters} // [] };
     return if !@params;
 
-    @required_params = @{ $args[0]->{required} // [] };
-    @valid_params    = @{ $args[0]->{valid}    // [] };
-    $allow_file      = $args[0]->{allow_file};
+    @required_params = @{ $options{required} // [] };
+    @valid_params    = @{ $options{valid}    // [] };
+    $allow_file      = $options{allow_file};
   }
   else {
     @params = @args;
   }
+
+  $options{pascal} //= $TRUE;
 
   $allow_file //= $TRUE;
 
@@ -115,13 +120,13 @@ sub _parse_params {
           return ( $parts[0], sprintf 'file://%s', $1 );
         }
 
-        my ($parameter) = toPascalCase( $parts[1] );
+        my ($parameter) = $options{pascal} ? toPascalCase( $parts[1] ) : $parts[1];
 
         return ( $parts[0], { $parameter => _scalar_or_array( $parts[2] ) } );
       };
     }
 
-    ($k) = toPascalCase($k);
+    ($k) = $options{pascal} ? toPascalCase($k) : $k;
     $v = ref $v ? $v : _scalar_or_array($v);
 
     if ( ref $v eq 'HASH' && ref $configuration{$k} eq 'HASH' ) {
@@ -133,7 +138,7 @@ sub _parse_params {
   }
 
   foreach my $p (@required_params) {
-    ($p) = toPascalCase($p);
+    ($p) = $options{pascal} ? toPascalCase($p) : $p;
 
     die "ERROR: $_ is a required parameter\n"
       if !exists $configuration{$p};
@@ -161,16 +166,25 @@ sub _resolve_file_arg {
 ########################################################################
 sub _handle_response {
 ########################################################################
-  my ( $self, $rsp ) = @_;
+  my ( $self, $rsp, $filter ) = @_;
 
   if ($EVAL_ERROR) {
     print {*STDERR} $EVAL_ERROR;
     return $FAILURE;
   }
 
-  print {*STDOUT} $rsp && ref $rsp ? JSON->new->pretty->encode($rsp) : defined $rsp ? $rsp : q{};
+  if ( !$rsp || !$filter || !ref $rsp ) {
+    print {*STDOUT} $rsp && ref $rsp ? JSON->new->pretty->encode($rsp) : defined $rsp ? $rsp : q{};
+    return $SUCCESS;
+  }
 
-  return $SUCCESS;
+  require Data::NestedKey;
+
+  my $dnk = Data::NestedKey->new($rsp);
+
+  $rsp = $dnk->get($filter);
+
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -333,6 +347,16 @@ sub main {
     'delete-rule'                      => \&cmd_eventbridge_delete_rule,
     'delete-topic'                     => \&cmd_sns_delete_topic,
     'describe-images'                  => \&cmd_ecr_describe_images,
+    'describe-listeners'               => \&cmd_elbv2_describe_listeners,
+    'describe-load-balancers'          => \&cmd_elbv2_describe_load_balancers,
+    'get-alb-target-group'             => \&cmd_elbv2_get_alb_target_group,
+    'create-alb-target-group'          => \&cmd_elbv2_create_alb_target_group,
+    'register-alb-target'              => \&cmd_elbv2_register_alb_target,
+    'deregister-alb-target'            => \&cmd_elbv2_deregister_alb_target,
+    'delete-alb-target-group'          => \&cmd_elbv2_delete_alb_target_group,
+    'get-alb-listener-rule'            => \&cmd_elbv2_get_alb_listener_rule,
+    'create-alb-listener-rule'         => \&cmd_elbv2_create_alb_listener_rule,
+    'delete-alb-listener-rule'         => \&cmd_elbv2_delete_alb_listener_rule,
     'describe-log-streams'             => \&cmd_logs_describe_log_streams,
     'describe-repositories'            => \&cmd_ecr_describe_repositories,
     'describe-rule'                    => \&cmd_eventbridge_describe_rule,

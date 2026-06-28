@@ -84,6 +84,9 @@ lambda-managed-policies:    $(CACHE_DIR)/lambda-managed-policies
 lambda-inline-policies:     $(CACHE_DIR)/lambda-inline-policies
 
 update-function:            lambda-function ## update Lambda function code to latest image
+ifneq ($(OVERLAY),)
+	$(NO_ECHO)rm -f $(CACHE_DIR)/overlay && $(MAKE) overlay
+endif
 
 $(CACHE_DIR):
 	mkdir -p $(CACHE_DIR)
@@ -240,8 +243,8 @@ update-policies: update-managed-policies update-inline-policies ## re-attach all
 
 $(CACHE_DIR)/image-digest: $(CACHE_DIR)/deploy | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
-	alr-helper describe-images $(REPO_NAME) | \
-	  perl -MJSON -0ne 'print decode_json($$_)->{imageDigest}' > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
+	digest="$$(alr-helper describe-images $(REPO_NAME) filter=imageDigest)"; \
+	echo "$$digest" > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 $(CACHE_DIR)/lambda-function: \
     $(CACHE_DIR)/image-digest \
@@ -263,7 +266,7 @@ $(CACHE_DIR)/lambda-function: \
 
 MEMORY ?= 128
 
-$(CACHE_DIR)/lambda-configuration: $(CACHE_DIR)/lambda-function $(LAMBDA_ENV) | $(CACHE_DIR)
+$(CACHE_DIR)/lambda-configuration: $(CACHE_DIR)/lambda-function $(LAMBDA_ENV) $(wildcard lambda-handler.env) | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
 	alr-helper update-function-configuration $(FUNCTION_NAME) memory-size:$(MEMORY) timeout:$(TIMEOUT) > $@ && chmod 444 $@
 
@@ -284,10 +287,39 @@ else ifeq ($(TRIGGER_TYPE),s3-direct)
 	$(MAKE) lambda-s3-pipeline
 else ifeq ($(TRIGGER_TYPE),sns)
 	$(MAKE) lambda-sns-pipeline
+else ifeq ($(TRIGGER_TYPE),alb)
+	$(MAKE) lambda-alb-pipeline
 else
 	$(error Unknown or unset TRIGGER_TYPE: '$(TRIGGER_TYPE)'. \
-	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge, s3-direct, sns)
+	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge, s3-direct, sns, alb)
 endif
+ifneq ($(OVERLAY),)
+	$(MAKE) overlay
+endif
+
+$(CACHE_DIR)/overlay: $(CACHE_DIR)/image $(wildcard Dockerfile) | $(CACHE_DIR)
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	chmod -f 644 $(CACHE_DIR)/overlay-ecr-repo 2>/dev/null || true; \
+	test -e Dockerfile || { \
+	    echo "ERROR: no Dockerfile found in $(CURDIR)" >&2; exit 1; \
+	}; \
+	test -z "$(OVERLAY)" && { \
+	    echo "ERROR: OVERLAY is required" >&2; exit 1; \
+	}; \
+	overlay_uri="$$(alr-helper describe-repositories $(OVERLAY) filter=repositories[0].repositoryUri)"; \
+	if [[ -z "$$overlay_uri" ]]; then \
+	    overlay_uri="$$(alr-helper create-repository $(OVERLAY) filter=repository.repositoryUri)"; \
+	fi; \
+	echo "$$overlay_uri" > $(CACHE_DIR)/overlay-ecr-repo && chmod 444 $(CACHE_DIR)/overlay-ecr-repo; \
+	docker build -t $(OVERLAY) . || exit 1; \
+	docker tag $(OVERLAY):latest $$overlay_uri:latest; \
+	docker push $$overlay_uri:latest || exit 1; \
+	DIGEST="$$(alr-helper describe-images $(OVERLAY) filter=imageDigest)"; \
+	alr-helper update-function $(FUNCTION_NAME) $$overlay_uri $$DIGEST && \
+	echo "$$overlay_uri@$$DIGEST" > $@ && chmod 444 $@
+
+.PHONY: overlay
+overlay: $(CACHE_DIR)/overlay ## build overlay image and update Lambda function
 
 .PHONY: lambda-teardown
 lambda-teardown: ## deprovision Lambda and all trigger-type infrastructure
@@ -299,9 +331,11 @@ else ifeq ($(TRIGGER_TYPE),s3-direct)
 	$(MAKE) lambda-s3-teardown
 else ifeq ($(TRIGGER_TYPE),sns)
 	$(MAKE) lambda-sns-teardown
+else ifeq ($(TRIGGER_TYPE),alb)
+	$(MAKE) lambda-alb-teardown
 else
 	$(error Unknown or unset TRIGGER_TYPE: '$(TRIGGER_TYPE)'. \
-	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge, s3-direct, sns)
+	  Set TRIGGER_TYPE in lambda.env to one of: s3-sqs, eventbridge, s3-direct, sns, alb)
 endif
 
 
@@ -342,6 +376,8 @@ include $(FRAMEWORK_DIR)/eventbridge.mk
 ########################################################################
 include $(FRAMEWORK_DIR)/s3.mk
 
+include $(FRAMEWORK_DIR)/alb.mk
+
 include $(FRAMEWORK_DIR)/streaming.mk
 
 CLEANFILES = \
@@ -381,8 +417,13 @@ CLEANFILES = \
     $(CACHE_DIR)/lambda-sqs-permission \
     $(CACHE_DIR)/lambda-s3-sqs-trigger \
     $(CACHE_DIR)/lambda-concurrency \
+    $(CACHE_DIR)/alb-lambda-permission \
+    $(CACHE_DIR)/alb-target-group \
+    $(CACHE_DIR)/alb-target-group-registration \
+    $(CACHE_DIR)/alb-listener-rule \
     $(CACHE_DIR)/cpanfile \
     $(CACHE_DIR)/debian-packages \
+    $(CACHE_DIR)/overlay-ecr-repo
 
 clean: ## remove all generated sentinels and docker artifacts
 	$(NO_ECHO)for a in $(CLEANFILES); do \

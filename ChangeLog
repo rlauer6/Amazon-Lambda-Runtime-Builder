@@ -1,3 +1,59 @@
+Sun Jun 28 10:46:50 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.2.8]:
+	* release-notes.md: updated
+	* release-notes/release-notes-1.2.8.md: new
+	* lib/Amazon/Lambda/Runtime/Builder/Role/ELBv2.pm.in: new
+	* share/alb.mk: new
+	* buildspec.yml: add above to build
+	* VERSION: bump
+	* lib/Amazon/Lambda/Runtime/Builder/Helper.pm.in
+	(_parse_params)
+	- pascal option to prevent conversion of keys
+	(_handle_response)
+	- filter support
+	(main)
+	- +describe-listeners,describe-load-balancers,get-alb-target-group,create-target-group
+	- +register-alb-target,deregister-alb-target,get-alb-listener-rule,creatge-alb-listener-rule
+	- +delete-alb-listener-rule
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Config.pm.in
+	(_validate_constraints)
+	- support for alb trigger type
+	* lib/Amazon/Lambda/Runtime/Builder/Role/ECR.pm.in
+	(cmd_ecr_create_repository): filter support
+	(cmd_ecr_describe_repositories)
+	- likewise
+	- return blank on not found
+	(cmd_ecr_describe_images): filter support, refactored
+	* lib/Amazon/Lambda/Runtime/Builder/Role/IAM.pm.in
+	(_wait_create_role): new, useless, but added anyway
+	(cmd_iam_create_role): call useless method above
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Lambda.pm.in
+	(_add_environment): new
+	(cmd_lambda_update_function_confguration)
+	- add environment if we have an environment file
+	- conditionally wait for function to be active
+	(cmd_lambda_invoke_function): conditionally wait for function to be active
+	(cmd_lambda_create_function):
+	- add environment if we have an environment file
+	- wait for role to be propogated
+	* requires: +Amazon::API::ELBv2, Data::NestedKey
+	* cpanfile: likewise
+	* share/Makefile.mk
+	- support for overlays
+	- support for alb trigger type
+	(image-digest):
+	- replace perl -MJSON with filter=
+	(lambda-configure): depends on lambd-handler.env
+	* share/builder.mk:
+	- +lambd-alb-pipeline, lambda-alb-teardown, overlay
+	* share/ecr-create-repo.mk
+	- replace perl -MJSON with filter=
+	* share/lambda-mapping.yml
+	- +alb trigger type
+	- +OVERLAY env var
+	- + trigger.listener_arn, trigger.path, trigger.priority
+
 Mon Jun 22 15:18:03 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.2.7]:

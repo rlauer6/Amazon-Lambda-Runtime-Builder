@@ -4,12 +4,13 @@ use strict;
 use warnings;
 
 use CLI::Simple::Constants qw(:booleans);
-use CLI::Simple::Utils qw(choose slurp_json );
+use CLI::Simple::Utils qw(choose slurp_json slurp);
 use Data::Dumper;
 use English qw(-no_match_vars);
 use JSON;
 use List::Util qw(none);
 use Role::Tiny;
+use Scalar::Util qw(blessed);
 
 use Readonly;
 Readonly::Scalar our $DEFAULT_LAMBDA_CREATE_TIMEOUT => 60;
@@ -167,6 +168,22 @@ sub _wait_eventsource_mapping_enabled {
 }
 
 ########################################################################
+sub _add_environment {
+########################################################################
+  my ( $self, $configuration ) = @_;
+
+  return if !-e 'lambda-handler.env';
+
+  my %environment = map { split /\s*=\s*/xsm, $_, 2 }
+    grep { /\S/xsm && !/^\s*[#]/xsm }
+    split /\n/xsm, slurp('lambda-handler.env');
+
+  $configuration->{Environment} = { Variables => \%environment };
+
+  return;
+}
+
+########################################################################
 sub cmd_lambda_update_function_configuration {
 ########################################################################
   my ($self) = @_;
@@ -174,18 +191,26 @@ sub cmd_lambda_update_function_configuration {
   my ( $function_name, @params ) = $self->get_args;
 
   die "ERROR: usage alr-builder-helper update-function-configuration function-name [param:value...|file://file.json]\n"
-    if !$function_name || !@params;
+    if !$function_name;
 
   my $lambda = $self->_lambda;
 
   my $configuration = $self->_parse_params(@params);
 
+  $self->_add_environment($configuration);
+
   my $rsp;
 
   eval {
-    $self->_wait_function_active( $function_name, $lambda );
+    if ( $self->get_wait ) {
+      $self->_wait_function_active( $function_name, $lambda );
+    }
+
     $rsp = $lambda->UpdateFunctionConfiguration( { FunctionName => $function_name, %{$configuration}, } );
-    $self->_wait_function_active( $function_name, $lambda );
+
+    if ( $self->get_wait ) {
+      $self->_wait_function_active( $function_name, $lambda );
+    }
   };
 
   return $self->_handle_response($rsp);
@@ -201,7 +226,10 @@ sub cmd_lambda_invoke_function {
   my $lambda = $self->_lambda;
 
   my $rsp = eval {
-    $self->_wait_function_active( $function_name, $lambda );
+    if ( $self->get_wait ) {
+      $self->_wait_function_active( $function_name, $lambda );
+    }
+
     return $lambda->Invoke( { FunctionName => $function_name, Payload => slurp($payload), } );
   };
 
@@ -225,18 +253,32 @@ sub cmd_lambda_create_function {
 
   my $rsp;
 
-  eval {
-    $rsp = $lambda->CreateFunction(
-      { FunctionName => $function_name,
-        Timeout      => $timeout,
-        Code         => { ImageUri => "$image:latest" },
-        Role         => $role_arn,
-        PackageType  => 'Image',
-      }
-    );
-
-    $self->_wait_function_active( $function_name, $lambda );
+  my $configuration = {
+    FunctionName => $function_name,
+    Timeout      => $timeout,
+    Code         => { ImageUri => "$image:latest" },
+    Role         => $role_arn,
+    PackageType  => 'Image',
   };
+
+  $self->_add_environment($configuration);
+
+  my $retries = 10;
+
+  while ( $retries-- ) {
+    eval { $rsp = $lambda->CreateFunction($configuration); };
+
+    last if $rsp;
+
+    die $EVAL_ERROR
+      if !blessed($EVAL_ERROR) || $EVAL_ERROR->get_message_raw !~ /cannot\sbe\sassumed/xsm;
+
+    sleep 2;
+  }
+
+  if ( $self->get_wait ) {
+    $self->_wait_function_active( $function_name, $lambda );
+  }
 
   return $self->_handle_response($rsp);
 }

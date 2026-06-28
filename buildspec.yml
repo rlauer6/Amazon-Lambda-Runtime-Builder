@@ -23,6 +23,7 @@ extra-files:
       - share/LambdaHandler.pm
       - share/Makefile.mk
       - share/Makefile.builder
+      - share/alb.mk
       - share/builder.stub
       - share/builder.mk
       - share/lambda-mapping.yml
