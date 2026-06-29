@@ -1,1 +1,1 @@
-release-notes/release-notes-1.2.8.md
+release-notes/release-notes-1.3.0.md

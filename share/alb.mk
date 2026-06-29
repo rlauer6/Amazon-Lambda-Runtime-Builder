@@ -24,7 +24,8 @@ RULE_PRIORITY ?= 10
 # grant ALB permission to invoke the Lambda function
 ########################################################################
 $(CACHE_DIR)/alb-lambda-permission: $(CACHE_DIR)/lambda-function | $(CACHE_DIR)
-	$(NO_ECHO)permission="$$(alr-helper get-lambda-policy $(FUNCTION_NAME) 2>&1 || true)"; \
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	permission="$$(alr-helper get-lambda-policy $(FUNCTION_NAME) 2>&1 || true)"; \
 	if echo "$$permission" | grep -q 'ResourceNotFoundException' || \
 	   ! echo "$$permission" | grep -q 'elasticloadbalancing.amazonaws.com'; then \
 	    alr-helper add-permission \
@@ -43,7 +44,8 @@ $(CACHE_DIR)/alb-lambda-permission: $(CACHE_DIR)/lambda-function | $(CACHE_DIR)
 # create Lambda target group
 ########################################################################
 $(CACHE_DIR)/alb-target-group: $(CACHE_DIR)/alb-lambda-permission | $(CACHE_DIR)
-	$(NO_ECHO)test -z "$(LISTENER_ARN)" && { \
+	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	test -z "$(LISTENER_ARN)" && { \
 	    echo "ERROR: LISTENER_ARN is required for alb trigger type" >&2; exit 1; \
 	}; \
 	tg="$$(alr-helper get-alb-target-group $(FUNCTION_NAME))"; \

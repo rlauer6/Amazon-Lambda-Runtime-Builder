@@ -7,6 +7,7 @@ use CLI::Simple::Constants qw(:booleans);
 use Data::Dumper;
 use English qw(-no_match_vars);
 use Role::Tiny;
+use List::Util qw(none);
 
 {
   my $logs;
@@ -25,6 +26,94 @@ use Role::Tiny;
 
     return $logs;
   }
+}
+
+########################################################################
+sub cmd_logs_put_retention_policy {
+########################################################################
+  my ($self) = @_;
+
+  my ( $log_group, $days ) = $self->get_args;
+
+  my @valid_retention_duration
+    = ( 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288 );
+
+  die "usage: alr-helper put-retention-policy days\n"
+    if !defined $days;
+
+  die sprintf "ERROR: retention days must be one of %s\n", join q{,}, @valid_retention_duration
+    if none { $_ == $days } @valid_retention_duration;
+
+  return $self->cmd_logs_delete_retention_policy
+    if $days == 0;
+
+  my $rsp = eval { $self->_logs->PutRetentionPolicy( { logGroupName => $log_group, retentionInDays => $days, } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_logs_delete_retention_policy {
+########################################################################
+  my ($self) = @_;
+
+  my ($log_group) = $self->get_args;
+
+  die "usage: alr-helper delete-retention-policy log-group-name\n"
+    if !$log_group;
+
+  my $rsp = eval { $self->_logs->DeleteRetentionPolicy( { logGroupName => $log_group } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_logs_describe_log_groups {
+########################################################################
+  my ($self) = @_;
+
+  my ( $log_group_name_prefix, @args ) = $self->get_args;
+
+  my $params = $self->_parse_params( { parameters => \@args, pascal => $FALSE } );
+
+  my $filter = $params->{filter};
+
+  die "usage: alr-helper describe-log-groups log-group-name-prefix [filter=]\n"
+    if !$log_group_name_prefix;
+
+  my $rsp = eval { $self->_logs->DescribeLogGroups( { logGroupNamePrefix => $log_group_name_prefix } ); };
+
+  return $self->_handle_response( $rsp, $filter );
+}
+
+########################################################################
+sub cmd_logs_delete_log_group {
+########################################################################
+  my ($self) = @_;
+
+  my ($log_group) = $self->get_args;
+
+  die "usage: alr-helper delete-log-group log-group-name days\n"
+    if !$log_group;
+
+  my $rsp = eval { $self->_logs->DeleteLogGroup( { logGroupName => $log_group } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
+sub cmd_logs_create_log_group {
+########################################################################
+  my ($self) = @_;
+
+  my ($log_group) = $self->get_args;
+
+  die "usage: alr-helper create-log-group log-group-name days\n"
+    if !$log_group;
+
+  my $rsp = eval { $self->_logs->CreateLogGroup( { logGroupName => $log_group } ); };
+
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################

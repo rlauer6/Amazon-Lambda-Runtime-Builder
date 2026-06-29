@@ -24,6 +24,9 @@ extra-files:
       - share/Makefile.mk
       - share/Makefile.builder
       - share/alb.mk
+      - share/log-group.mk
+      - share/overlay.mk
+      - share/platform.mk
       - share/builder.stub
       - share/builder.mk
       - share/lambda-mapping.yml

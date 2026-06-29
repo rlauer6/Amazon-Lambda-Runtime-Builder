@@ -78,3 +78,18 @@ lambda-alb-teardown:
 
 overlay:
 	$(MAKE) -f $(ALR_BUILDER) overlay
+
+overlay-teardown:
+	$(MAKE) -f $(ALR_BUILDER) overlay-teardown
+
+platform:
+	$(MAKE) -f $(ALR_BUILDER) platform
+
+platform-teardown:
+	$(MAKE) -f $(ALR_BUILDER) platform-teardown
+
+log-group:
+	$(MAKE) -f $(ALR_BUILDER) log-group
+
+log-group-teardown:
+	$(MAKE) -f $(ALR_BUILDER) log-group-teardown

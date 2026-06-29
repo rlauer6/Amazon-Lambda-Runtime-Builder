@@ -1,5 +1,14 @@
-# Perl Lambda Runtime POC
-# Base: debian:trixie-slim
+# Perl Lambda handler image
+# Installs the handler distribution on top of perl-lambda-base.
+#
+# Layer 1: perl-lambda-base (runtime + all ALR deps)
+# Layer 2: this image (handler distribution installed on top)
+#
+# Override PLATFORM_IMAGE to use a custom platform layer between
+# perl-lambda-base and the handler e.g.:
+#   docker build --build-arg PLATFORM_IMAGE=my-platform:latest ...
+
+ARG PLATFORM_IMAGE=perl-lambda-base:latest
 
 ########################################################################
 FROM debian:trixie-slim AS builder
@@ -9,7 +18,6 @@ ARG RESOLVER="--resolver 02packages,https://cpan.openbedrock.net/orepan2"
 ARG EXTRA_BUILD_PACKAGES=""
 ARG DIST_TARBALL=""
 
-# Install build tools and runtime deps
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         perl libssl3 libexpat1 zlib1g ca-certificates \
@@ -34,28 +42,20 @@ COPY ${DIST_TARBALL} /usr/src/app/
 RUN cpm install -L /usr/src/app/local ${RESOLVER} ${DIST_TARBALL}
 
 ########################################################################
-FROM debian:trixie-slim
+# Runtime stage — built on perl-lambda-base which already contains the
+# Perl runtime, bootstrap, plambda.pl, and all ALR dependencies.
+# Only the handler distribution's installed modules are added here.
+########################################################################
+FROM ${PLATFORM_IMAGE}
 ########################################################################
 
 ARG HANDLER_CLASS="LambdaHandler"
-ARG RESOLVER=""
-ARG EXTRA_RUNTIME_PACKAGES=""
 
 WORKDIR /usr/src/app
 
+# Add only the handler distribution — everything else is in the base image
 COPY --from=builder /usr/src/app/local /usr/src/app/local
-COPY --from=builder /usr/src/app/local/bin/bootstrap /usr/local/bin/bootstrap
-COPY --from=builder /usr/src/app/local/bin/plambda.pl /usr/local/bin/plambda.pl
 
-RUN apt-get update --fix-missing && \
-    apt-get install -y --no-install-recommends \
-       perl libssl3 libexpat1 zlib1g ca-certificates \
-    ${EXTRA_RUNTIME_PACKAGES} && \
-    apt-get autoremove -y && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /root/.cpanm /tmp/*.tar.gz
-
-ENV PERL5LIB=/usr/src/app/local/lib/perl5
 ENV LAMBDA_MODULE=${HANDLER_CLASS}
 
 ENTRYPOINT ["/usr/local/bin/bootstrap"]

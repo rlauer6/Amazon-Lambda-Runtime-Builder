@@ -49,6 +49,13 @@ mapping:
   - yaml: overlay
     env: OVERLAY
 
+  - yaml: platform_image
+    env: PLATFORM_IMAGE
+
+  - yaml: log_retention
+    env: LOG_RETENTION
+    default: 1
+
   - yaml: trigger.bucket
     env: BUCKET_NAME
     required: true

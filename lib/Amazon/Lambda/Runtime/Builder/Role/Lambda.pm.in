@@ -270,8 +270,15 @@ sub cmd_lambda_create_function {
 
     last if $rsp;
 
-    die $EVAL_ERROR
-      if !blessed($EVAL_ERROR) || $EVAL_ERROR->get_message_raw !~ /cannot\sbe\sassumed/xsm;
+    if ($EVAL_ERROR) {
+      die $EVAL_ERROR
+        if !blessed $EVAL_ERROR;
+
+      my $err = $EVAL_ERROR->get_message_raw;
+
+      die $EVAL_ERROR
+        if $err !~ /cannot\sbe\sassumed|InvalidArnException/xsm;
+    }
 
     sleep 2;
   }
