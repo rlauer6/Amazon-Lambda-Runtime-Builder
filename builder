@@ -17,15 +17,15 @@
 #
 ########################################################################
 
-INSTALLER="${INSTALLER:-cpm install -g --resolver 02packages,https://cpan.openbedrock.net/orepan2 }"
+INSTALLER="${INSTALLER:-cpm install -g --show-build-log-on-failure --verbose}"
 
 ########################################################################
 function install_deps {
 ########################################################################
     
-    EXTRA_DEPS=(CPAN::Maker@1.9.1)
+    EXTRA_DEPS=(CPAN::Maker CPAN::Maker::Bootstrapper)
     EXTRA_DEPS+=(File::ShareDir File::ShareDir::Install)
-    EXTRA_DEPS+=(Pod::Markdown Markdown::Render@2.0.4)
+    EXTRA_DEPS+=(Pod::Markdown Markdown::Render)
 
     if [[ -n "$PERLCRITICRC" ]]; then
         EXTRA_DEPS+=(Perl::Critic Perl::Critic::Policy::Compatibility::PodMinimumVersion)
@@ -47,9 +47,7 @@ function install_deps {
     trap 'rm -f "$all_requires"' EXIT
 
     test -e requires && cat requires >> $all_requires
-    sed -i '/^ *$/d' build-requires 
     test -e build-requires && cat build-requires >> $all_requires
-    sed -i '/^ *$/d' test-requires 
     test -e test-requires && cat test-requires >> $all_requires
 
     perl -ne 'chomp;($m,$v)=split /(?:[@]|\s+)/,$_,2; $v //= q{}; $m=~s/^\+//; $v = $v eq q{0} ? q{} : $v; print qq{requires "$m", "$v";\n};' \
@@ -79,13 +77,11 @@ apt-get update && apt-get install -y \
    git \
    gcc \
    make \
-   sed \
    perl \
    curl \
    ca-certificates \
    libexpat-dev \
    libssl-dev \
-   libxml2-dev \
    libzip-dev
 
 if [[ "$INSTALLER" =~ cpm ]]; then
@@ -101,9 +97,9 @@ else
 fi
 
 if [[ -n "$REPO" ]]; then
-    git clone $REPO
-
-    cd $(basename $REPO .git)
+    dir=$(basename $REPO .git)
+    test -d $dir || git clone $REPO
+    cd $dir
 else
    git rev-parse --git-dir > /dev/null 2>&1 \
         || { echo "ERROR: not a git repository and no REPO specified" >&2; exit 1; }

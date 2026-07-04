@@ -42,6 +42,21 @@ COPY ${DIST_TARBALL} /usr/src/app/
 RUN cpm install -L /usr/src/app/local ${RESOLVER} ${DIST_TARBALL}
 
 ########################################################################
+# Reinstall any modules that may also be in development
+########################################################################
+ARG CACHE_BUST=0
+RUN echo ${CACHE_BUST}
+
+COPY requires.reinstall* /tmp/
+RUN if [ -f /tmp/requires.reinstall ]; then \
+      cpm install --reinstall ${RESOLVER} \
+        -L /usr/src/app/local \
+        --show-build-log-on-failure \
+        --verbose \
+        $(cat /tmp/requires.reinstall | tr '\n' ' '); \
+    fi
+
+########################################################################
 # Runtime stage — built on perl-lambda-base which already contains the
 # Perl runtime, bootstrap, plambda.pl, and all ALR dependencies.
 # Only the handler distribution's installed modules are added here.

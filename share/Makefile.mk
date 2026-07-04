@@ -134,11 +134,13 @@ $(CACHE_DIR)/image: \
 	cp $(FRAMEWORK_DIR)/Dockerfile $$buildctx/; \
 	cp $(CACHE_DIR)/cpanfile $$buildctx/; \
 	cp $(DIST_TARBALL) $$buildctx/; \
+        test -e requires.reinstall && cp requires.reinstall $$buildctx/; \
 	if [[ -n "$(RESOLVER)" ]]; then \
 	  resolver="--build-arg RESOLVER=\"--resolver $(RESOLVER)\""; \
 	fi; \
 	docker build $(NOCACHE) $(REBUILD_ARG) \
 	  --build-arg DIST_TARBALL=$$(basename $(DIST_TARBALL)) \
+	  --build-arg CACHE_BUST="$(CACHE_BUST)" \
 	  --build-arg HANDLER_CLASS=$(HANDLER_CLASS) \
 	  --build-arg EXTRA_BUILD_PACKAGES="$(EXTRA_BUILD_PACKAGES)" \
 	  --build-arg EXTRA_RUNTIME_PACKAGES="$(EXTRA_RUNTIME_PACKAGES)" \

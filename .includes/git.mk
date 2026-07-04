@@ -34,5 +34,6 @@ git: ## initializes a git repository and commits the recommended artifacts
 	  echo -e "\t* $${a#./}: new" >>$$changelog_files; \
 	done; \
 	sort $$changelog_files >>ChangeLog; \
-	git add ChangeLog && test -z "$$NOCOMMIT" || git commit -m 'BigBang'
+	git add ChangeLog; \
+	git commit -m 'BigBang'
 
