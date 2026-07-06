@@ -453,19 +453,585 @@ __END__
 
 =pod
 
+=encoding utf8
+
 =head1 NAME
 
- alr-helper
+alr-helper - thin AWS API wrapper used by the ALRB build pipeline
 
 =head1 SYNOPSIS
 
- alr-helper options command
+ alr-helper [options] command [arguments]
 
 =head1 DESCRIPTION
 
-Helper functions that replace the need to include the C<aws>
-CLI. These functions are not full implementations of the CLI commands
-but rather a slimmed down invocation of AWS APIs with only the
-parameters required for this application.
+Helper functions that replace the need to include the C<aws> CLI. These
+functions are not full implementations of the CLI commands but rather a
+slimmed-down invocation of AWS APIs with only the parameters required for
+this application.
+
+C<alr-helper> is invoked by the ALRB Makefiles to carry out each step of a
+deploy; you do not normally call it directly. It is documented here because
+running a single command by hand is often the fastest way to inspect state
+or debug a pipeline that stopped partway.
+
+Each command below is tagged:
+
+=over 4
+
+=item * B<[read]> - describes/lists/gets; makes no change to your account. Safe to run freely.
+
+=item * B<[write]> - creates, updates, deletes, or otherwise mutates AWS resources.
+
+=item * B<[local]> - operates on a local tarball or prints a document; calls no AWS API.
+
+=back
+
+=head2 Argument conventions
+
+Most commands take B<positional> arguments (shown in I<italics> below).
+Some also accept, or require, B<named parameters> that map onto the
+underlying AWS API request. Named parameters are given as C<key=value> or
+C<key:value>:
+
+=over 4
+
+=item *
+
+Use C<key=value> when the value itself contains a colon - an ARN, a URL, a
+C<file://> path - e.g. C<topic-arn=arn:aws:sns:us-east-1:...>.
+
+=item *
+
+Use C<key:value> for simple values. A three-part C<key:field:value> form
+builds a nested parameter, and C<key:file://path> is accepted for file
+references.
+
+=item *
+
+Comma-separated values become a list (array).
+
+=item *
+
+Keys are converted to PascalCase to match AWS parameter names by default
+(so C<visibility-timeout> becomes C<VisibilityTimeout>); a few read
+commands disable this and pass keys through verbatim.
+
+=back
+
+Where a command accepts C<file://name.json> as its first argument, that
+JSON file is slurped and used as the entire request body.
+
+=head2 Commands
+
+=head3 CloudFront Functions
+
+=over 4
+
+=item B<create-invalidation> I<distribution-id> I<path> [I<path> ...]
+
+[write] Invalidate one or more paths in a CloudFront distribution.
+
+=back
+
+=head3 CloudWatch Logs Functions
+
+=over 4
+
+=item B<create-log-group> I<log-group>
+
+[write] Create a CloudWatch log group.
+
+=item B<delete-log-group> I<log-group>
+
+[write] Delete a log group and its streams.
+
+=item B<delete-retention-policy> I<log-group>
+
+[write] Remove a log group's retention policy (events then kept indefinitely).
+
+=item B<describe-log-groups> [I<prefix>] [I<key:value> ...]
+
+[read] List log groups, optionally filtered by name prefix.
+
+=item B<describe-log-streams> I<log-group> [I<limit>]
+
+[read] List the streams in a log group.
+
+=item B<put-retention-policy> I<log-group> I<days>
+
+[write] Set a log group's retention, in days.
+
+=back
+
+=head3 ECR Functions
+
+=over 4
+
+=item B<create-repository> I<repo-name> [I<key:value> ...]
+
+[write] Create an ECR repository.
+
+=item B<delete-repo> I<repo-name>
+
+[write] Delete an ECR repository.
+
+=item B<delete-repo-policy> I<repo-name>
+
+[write] Delete a repository's resource policy.
+
+=item B<describe-images> I<repo-name> [I<key:value> ...]
+
+[read] List images in a repository.
+
+=item B<describe-repositories> [I<repo-name>] [I<key:value> ...]
+
+[read] List repositories, or describe one by name.
+
+=item B<get-lifecycle-policy> I<repo-name>
+
+[read] Show a repository's lifecycle policy.
+
+=item B<get-login-password>
+
+[read] Print an ECR authorization token, for C<docker login>.
+
+=item B<put-lifecycle-policy> I<repo-name> I<count-number> I<count-unit>
+
+[write] Set a lifecycle policy that expires images after the given count.
+
+=back
+
+=head3 ELB Functions
+
+=over 4
+
+=item B<create-alb-listener-rule> I<listener-arn> I<target-group-arn> [I<key=value> ...]
+
+[write] Add a listener rule that routes a path to a target group.
+
+=item B<create-alb-target-group> I<name>
+
+[write] Create a Lambda-type target group.
+
+=item B<delete-alb-listener-rule> I<rule-arn>
+
+[write] Delete a listener rule.
+
+=item B<delete-alb-target-group> I<target-group-arn>
+
+[write] Delete a target group.
+
+=item B<deregister-alb-target> I<target-group-arn> I<function-name>
+
+[write] Deregister a Lambda from a target group.
+
+=item B<describe-listeners> I<load-balancer-arn>
+
+[read] List the listeners on a load balancer.
+
+=item B<describe-load-balancers> [I<key:value> ...]
+
+[read] List load balancers.
+
+=item B<get-alb-listener-rule> I<listener-arn> I<path>
+
+[read] Find the listener rule matching a path.
+
+=item B<get-alb-target-group> I<name>
+
+[read] Find a target group by name.
+
+=item B<register-alb-target> I<target-group-arn> I<function-name>
+
+[write] Register a Lambda into a target group.
+
+=back
+
+=head3 EventBridge Functions
+
+=over 4
+
+=item B<delete-rule> I<rule-name>
+
+[write] Delete a rule.
+
+=item B<describe-rule> I<rule-name>
+
+[read] Show a rule.
+
+=item B<disable-rule> I<rule-name>
+
+[write] Disable a rule without deleting it.
+
+=item B<enable-rule> I<rule-name>
+
+[write] Enable a previously disabled rule.
+
+=item B<put-lambda-target> I<function-name> I<rule-name> [I<id>]
+
+[write] Set a Lambda function as a rule's target.
+
+=item B<put-rule-expression> I<rule-name> I<schedule-expression> [I<state>]
+
+[write] Create or update a scheduled rule (e.g. C<'rate(1 day)'>).
+
+=item B<put-rule-pattern> I<rule-name> I<event-pattern> [I<state>]
+
+[write] Create or update an event-pattern rule.
+
+=item B<remove-targets> I<rule-name> I<id> [I<id> ...]
+
+[write] Remove one or more targets from a rule.
+
+=back
+
+=head3 IAM Functions
+
+=over 4
+
+=item B<attach-policies-from-profile> I<role-name> I<profile-name>
+
+[write] Attach the managed policies named by a C<profiles.yml> profile.
+
+=item B<attach-policy> I<role-name> I<policy-file>
+
+[write] Attach the managed-policy ARNs listed in a file to a role.
+
+=item B<create-assume-policy> I<service>
+
+[local] Print an assume-role trust-policy document for a service principal
+(e.g. C<lambda.amazonaws.com>).
+
+=item B<create-role> I<role-name> I<policy-document>
+
+[write] Create an IAM role with the given trust policy.
+
+=item B<delete-role> I<role-name>
+
+[write] Delete a role.
+
+=item B<detach-all-policies> I<role-name>
+
+[write] Detach every managed policy from a role.
+
+=item B<detach-role-policy> I<role-name> I<policy-name-or-arn>
+
+[write] Detach a single managed policy from a role.
+
+=item B<get-role> I<role-name>
+
+[read] Show a role.
+
+=item B<list-attached-policies> I<role-name>
+
+[read] List the managed policies attached to a role.
+
+=item B<put-role-policies> I<key:value> ...
+
+[write] Put an inline role policy - e.g.
+C<role-name:my-role policy-document:file://custom-policies.json>.
+
+=back
+
+=head3 Lambda Functions
+
+=over 4
+
+=item B<add-permission> I<function-name> I<statement-id> I<action> I<principal> I<source-arn>
+
+[write] Grant a service permission to invoke the function.
+
+=item B<create-eventsource-mappings> I<function-name> I<arn-or-name> [I<key:value> ...]
+
+[write] Create an event-source mapping (e.g. an SQS queue driving the function).
+
+=item B<create-function> I<function-name> I<role-name> I<image-uri>
+
+[write] Create a Lambda function from a container image.
+
+=item B<create-function-url-config> I<function-name> [I<invoke-mode>]
+
+[write] Create a Function URL (invoke mode defaults to C<RESPONSE_STREAM>).
+
+=item B<delete-eventsource-mappings> I<uuid>
+
+[write] Delete an event-source mapping by UUID.
+
+=item B<delete-function> I<function-name>
+
+[write] Delete a function.
+
+=item B<delete-function-url-config> I<function-name>
+
+[write] Delete a function's Function URL.
+
+=item B<get-function> I<function-name>
+
+[read] Show a function.
+
+=item B<get-function-arn> I<function-name>
+
+[read] Print a function's ARN.
+
+=item B<get-function-concurrency> I<function-name>
+
+[read] Show a function's reserved concurrency.
+
+=item B<get-function-configuration> I<function-name>
+
+[read] Show a function's configuration (memory, timeout, etc.).
+
+=item B<get-function-url-config> I<function-name>
+
+[read] Show a function's Function URL configuration.
+
+=item B<get-lambda-policy> I<function-name>
+
+[read] Show a function's resource (invoke) policy.
+
+=item B<invoke-function> I<function-name> I<payload>
+
+[write] Invoke a function. I<payload> is a JSON string or a file path.
+
+=item B<list-eventsource-mappings> I<function-name> [I<arn-or-name>] [I<uuid>]
+
+[read] List a function's event-source mappings.
+
+=item B<put-function-concurrency> I<function-name> I<reserved-concurrent-executions>
+
+[write] Set a function's reserved concurrency.
+
+=item B<remove-permission> I<function-name> I<statement-id> ...
+
+[write] Remove an invoke permission from a function.
+
+=item B<update-eventsource-mapping> I<key:value> ...
+
+[write] Update an event-source mapping (e.g. C<uuid:... function-response-types:...>).
+
+=item B<update-function> I<function-name> I<repo-name> I<digest>
+
+[write] Update a function's code to a specific image digest.
+
+=item B<update-function-configuration> I<function-name> [I<key:value> ...]
+
+[write] Update a function's configuration (memory, timeout, etc.).
+
+=item B<wait-eventsource-mapping-enabled> I<uuid>
+
+[read] Block until an event-source mapping reaches the Enabled state.
+
+=item B<wait-function-active> I<function-name>
+
+[read] Block until a function reaches the Active state.
+
+=back
+
+=head3 Miscellaneous Functions
+
+=over 4
+
+=item B<check> I<file> (requires C<--tarball>)
+
+[local] Exit 0 if the tarball contains C<lib/>I<file>; used by the
+C<tarball-validated> build step to confirm the handler module is present.
+
+=item B<create-cpanfile> (requires C<--tarball>) [C<--output> I<file>]
+
+[local] Generate a C<cpanfile> from the tarball's C<META.json> (runtime and
+configure prerequisites), to stdout or to C<--output>.
+
+=item B<get-meta> I<key> (requires C<--tarball>)
+
+[local] Print a single value from the tarball's C<META.json>.
+
+=back
+
+=head3 S3 Functions
+
+=over 4
+
+=item B<create-bucket> I<bucket-name>
+
+[write] Create an S3 bucket.
+
+=item B<get-bucket-notification> I<bucket-name>
+
+[read] Show a bucket's notification configuration.
+
+=item B<list-buckets> [I<bucket-name>]
+
+[read] List buckets, or check for one by name.
+
+=item B<put-bucket-notification> I<bucket-name> [I<key:value> ...]
+
+[write] Configure a bucket's event notifications (to a Lambda or an SQS queue).
+
+=item B<remove-bucket-notification> I<bucket-name>
+
+[write] Clear a bucket's notification configuration.
+
+=back
+
+=head3 STS Functions
+
+=over 4
+
+=item B<get-account>
+
+[read] Print the current AWS account ID.
+
+=back
+
+=head3 SQS Functions
+
+=over 4
+
+=item B<create-queue> I<queue-name> [I<key:value> ...]
+
+[write] Create an SQS queue.
+
+=item B<delete-queue> I<queue-name>
+
+[write] Delete a queue.
+
+=item B<get-queue-arn> I<queue-name>
+
+[read] Print a queue's ARN.
+
+=item B<get-queue-attributes> I<queue-name> [I<attribute> ...]
+
+[read] Show a queue's attributes.
+
+=item B<get-queue-policy> I<queue-name>
+
+[read] Show a queue's access policy.
+
+=item B<purge-queue> I<queue-name>
+
+[write] Delete all messages in a queue.
+
+=item B<list-queues>
+
+[read] List queues.
+
+=item B<set-queue-bucket-policy> I<queue-name> I<bucket-name>
+
+[write] Grant an S3 bucket permission to send messages to the queue.
+
+=item B<set-queue-redrive-policy> I<queue-name> I<dlq-name> I<receive-count>
+
+[write] Set the queue's dead-letter redrive policy.
+
+=back
+
+=head3 SNS Functions
+
+=over 4
+
+=item B<create-topic> I<topic-name> [I<key:value> ...]
+
+[write] Create an SNS topic.
+
+=item B<delete-topic> I<name-or-arn>
+
+[write] Delete a topic.
+
+=item B<get-subscription> I<name-or-arn> I<arn>
+
+[read] Show a subscription's attributes.
+
+=item B<get-topic> I<name-or-arn>
+
+[read] Show a topic's attributes.
+
+=item B<list-subscriptions> I<name-or-arn>
+
+[read] List a topic's subscriptions.
+
+=item B<list-topics>
+
+[read] List topics.
+
+=item B<publish> I<message> C<topic-arn=>I<arn> [I<key:value> ...]
+
+[write] Publish a message to a topic (C<topic-arn> required; accepts C<file://>).
+
+=item B<subscribe> I<name-or-arn> [I<key:value> ...]
+
+[write] Subscribe an endpoint to a topic.
+
+=item B<unsubscribe> I<subscription-arn>
+
+[write] Remove a subscription.
+
+=back
+
+=head2 Options
+
+I<Not all options apply to all commands.>
+
+=over 4
+
+=item B<--dryrun>, B<-d>
+
+Show the API call that would be made without executing it.
+
+=item B<--input>, B<-i> I<file>
+
+Read request input (e.g. a JSON body) from a file.
+
+=item B<--localstack>, B<-L>
+
+Target a LocalStack endpoint instead of live AWS.
+
+=item B<--config-file>, B<-c> I<file>
+
+Read configuration from I<file>.
+
+=item B<--log-level>, B<-l> I<level>
+
+Log verbosity: C<trace>, C<debug>, C<info> (default), C<warn>, C<error>, C<fatal>.
+
+=item B<--output>, B<-o> I<file>
+
+Write output to I<file> instead of stdout.
+
+=item B<--region>, B<-r> I<region>
+
+AWS region for the call.
+
+=item B<--tarball>, B<-t> I<file>
+
+Distribution tarball, for the C<check>, C<create-cpanfile>, and C<get-meta> commands.
+
+=item B<--help>, B<-h>
+
+Show usage.
+
+=item B<--timeout>, B<-T> I<seconds>
+
+Timeout for C<wait-*> and other long-running calls.
+
+=item B<--wait>, B<-w> I<seconds>
+
+Poll interval for C<wait-*> commands.
+
+=back
+
+=head1 SEE ALSO
+
+L<Amazon::Lambda::Runtime::Builder>, L<Amazon::Lambda::Runtime>
+
+=head1 AUTHOR
+
+Rob Lauer - E<lt>rlauer@treasurersbriefcase.comE<gt>
+
+=head1 LICENSE
+
+(c) Copyright 2019-2026 Robert C. Lauer. All rights reserved. This module is
+free software. It may be used, redistributed and/or modified under the same
+terms as Perl itself.
 
 =cut

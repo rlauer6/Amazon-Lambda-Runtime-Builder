@@ -99,8 +99,8 @@ __END__
 
 =head1 NAME
 
-Amazon::Lambda::Runtime::Builder - Project scaffolding and environment
-checker for Perl Lambda container images
+Amazon::Lambda::Runtime::Builder - scaffolding, environment checker, and
+deployment toolchain for Perl Lambda container images
 
 =head1 SYNOPSIS
 
@@ -124,14 +124,22 @@ checker for Perl Lambda container images
 C<Amazon::Lambda::Runtime::Builder> is the companion deployment tool for
 L<Amazon::Lambda::Runtime>. It handles everything outside of the Perl
 runtime itself: scaffolding a new project directory, verifying your build
-environment, and documenting the full build and deploy workflow.
+environment, and providing the C<make>-based build/deploy pipeline that
+turns a handler distribution into a deployed Lambda function wired to the
+event source of your choice.
 
-It provides four commands via the C<alr-builder> CLI:
+Five trigger types are supported - C<s3-sqs>, C<s3-direct>,
+C<eventbridge>, C<sns>, and C<alb> - selected with a single
+C<TRIGGER_TYPE> value and provisioned by one dispatching target
+(C<make lambda-pipeline>). See L</CONFIGURATION> and L</WORKFLOW>.
+
+The C<alr-builder> CLI provides four commands:
 
 =over 4
 
-=item * B<install> - copies the project scaffold (Dockerfile, Makefile,
-handler template, cpanfile, and test fixtures) into a target directory.
+=item * B<install> - copies the project scaffold (handler template,
+managed-policy list, and the C<make> integration files) into a target
+directory.
 
 =item * B<check> - verifies that required system tools are present on
 your C<PATH> and, if the optional IAM modules are installed, confirms
@@ -147,52 +155,57 @@ workflow described in L</CONFIGURATION>.
 
 =back
 
+A second, internal CLI - C<alr-helper> - wraps the AWS API calls the
+Makefiles invoke (ECR, IAM, Lambda, SQS, SNS, S3, EventBridge, ELBv2,
+CloudWatch Logs, STS). You do not normally call it directly; the
+Makefiles do.
+
 =head1 COMMANDS
 
 =head2 install
 
-  alr-builder install [--install-dir DIR]
+  alr-builder install [--install-dir DIR] [--force]
 
-Copies the project scaffold from the distribution's C<share/> directory
-into the target directory (defaults to the current working directory).
-Creates the directory if it does not exist.
-
-The following files are installed:
+Copies the project scaffold into the target directory (defaults to the
+current working directory), creating the directory if it does not exist.
+The set of installed files is driven by the distribution's
+C<share/MANIFEST.json>:
 
 =over 4
 
-=item * C<Dockerfile> - multi-stage build using C<debian:trixie-slim>.
-The builder stage installs Perl, build tools, and your C<cpanfile>
-dependencies via Carton. The runtime stage is a minimal image containing
-only the Perl interpreter, runtime libraries, and your handler.
+=item * C<LambdaHandler.pm> - handler template with stub implementations
+for SQS, SNS, S3, and EventBridge events, plus a streaming-response
+example for Function URL invocations. Edit it in place or replace it with
+your own handler module. Installed with C<overwrite: never> - an existing
+copy is left untouched.
 
-=item * C<LambdaHandler.pm.in> - handler template with stub
-implementations for SQS, SNS, S3, and EventBridge events, plus a
-streaming response example for Function URL invocations. Rename or copy
-this file and customize it for your Lambda.
+=item * C<policies> - AWS managed IAM policy ARNs to attach to the Lambda
+execution role. One ARN per line; lines beginning with C<#> are comments.
+Installed with C<overwrite: never>.
 
-=item * C<Makefile> (installed as C<Makefile.build>, renamed on install)
-- provides targets for the complete build and deployment workflow. See
-L</WORKFLOW> and L</MAKEFILE TARGETS>.
+=item * C<Makefile.builder> - the build engine. A thin, regeneratable
+wrapper that C<include>s the framework's C<Makefile.mk> from this
+distribution's share directory. Installed with C<overwrite: always> -
+safe to regenerate and safe to commit.
 
-=item * C<cpanfile> - starting point for your Perl dependencies. Add
-modules here.
-
-=item * Test fixture makefiles - C<sqs-test.mk>, C<sns-test.mk>,
-C<s3-test.mk>, C<eventbridge-test.mk>, C<streaming-test.mk> - provide
-targets for creating and testing each event source trigger.
-
-=item * C<payload.json>, C<payload-sns.json> - sample invocation payloads
-for C<make invoke> and C<make test-sns>.
-
-=item * C<ecr-create-repo.mk> - creates the ECR repository if it does
-not already exist.
-
-=item * C<policies> - IAM managed policy ARNs to attach to the Lambda
-execution role. Add one ARN per line; lines beginning with C<#> are
-comments.
+=item * C<project.mk> - the file you include from your own C<Makefile>. It
+pulls in the framework's C<builder.mk>, which exposes the user-facing
+targets (each delegates to C<make -f Makefile.builder ...>). If
+C<project.mk> already exists, the ALRB integration block is appended
+between marker comments and a C<project.mk.bak> backup is written; an
+already-integrated C<project.mk> is left unchanged.
 
 =back
+
+The Dockerfile, the trigger Makefiles (C<sqs.mk>, C<sns.mk>, C<s3.mk>,
+C<eventbridge.mk>, C<alb.mk>, C<streaming.mk>), and the platform/overlay/
+log-group fragments are B<not> copied into the project - they are read
+from this distribution's share directory at build time. The C<cpanfile>
+used to build the image is generated on demand from your distribution
+tarball's C<META.json> (see L</WORKFLOW>).
+
+Use C<--force> to overwrite a file whose manifest policy would otherwise
+refuse to replace it.
 
 =head2 check
 
@@ -202,8 +215,8 @@ Verifies that your environment is ready to build and deploy. Checks two
 things:
 
 B<Required system tools> - C<docker> and C<make> must be on your
-C<PATH>. C<curl> is checked as an optional tool. Missing required
-tools are reported as errors.
+C<PATH>. C<curl> is checked as an optional tool. The tool list comes from
+C<MANIFEST.json>. Missing required tools are reported as errors.
 
 B<IAM permissions> - if L<Amazon::API::IAM>, L<Amazon::API::STS>, and
 L<Amazon::Credentials> are installed, calls C<SimulatePrincipalPolicy>
@@ -227,9 +240,11 @@ and reports three groups:
 =over 4
 
 =item * B<MISSING (required)> - required values with no default that are
-not set. C<image.handler> (C<HANDLER_CLASS>) is required for every trigger
-type; C<trigger.bucket> (C<BUCKET_NAME>) is additionally required for the
-C<s3-sqs> trigger type.
+not set. C<image.handler> (C<HANDLER_CLASS>) and C<trigger.type>
+(C<TRIGGER_TYPE>) are required for every trigger type. Each trigger type
+adds its own required values: C<trigger.bucket> (C<BUCKET_NAME>) for
+C<s3-sqs> and C<s3-direct>, C<trigger.topic_name> (C<TOPIC_NAME>) for
+C<sns>, and C<trigger.listener_arn> (C<LISTENER_ARN>) for C<alb>.
 
 =item * B<Customized> - values present in C<lambda.env> that differ from
 their C<lambda-mapping.yml> default, or have no default at all.
@@ -239,6 +254,8 @@ default that applies in their place.
 
 =back
 
+Fields are scoped to the active C<trigger.type> via C<lambda-mapping.yml>'s
+C<applies_to>, so only the values relevant to your trigger are reported.
 Exits non-zero if any required values are missing.
 
 =head2 generate-yaml
@@ -254,9 +271,8 @@ Performs the same validation as C<check-env-file> first; if any required
 values are missing, no C<lambda.yaml> is written and the missing fields
 are reported instead. Otherwise, writes a minimal C<lambda.yaml>
 containing only values that differ from their defaults (plus any field
-with no default, such as C<trigger.bucket>/C<trigger.prefix>) - fields
-matching their default are omitted, since C<Makefile.mk> applies the same
-defaults via C<lambda-mapping.yml>.
+with no default) - fields matching their default are omitted, since
+C<Makefile.mk> applies the same defaults via C<lambda-mapping.yml>.
 
 =head1 OPTIONS
 
@@ -265,6 +281,21 @@ defaults via C<lambda-mapping.yml>.
 =item C<--install-dir|-i> DIR
 
 Target directory for C<install>. Defaults to the current working directory.
+
+=item C<--config-file|-c> FILE
+
+Configuration file to read. Defaults to C<lambda.env> (falling back to the
+C<LAMBDA_ENV>/C<LAMBDA_YAML> environment variables).
+
+=item C<--profile|-p> NAME
+
+AWS named profile to use for this invocation. Sets C<AWS_PROFILE> for the
+credential lookups performed by C<check>.
+
+=item C<--force|-f>
+
+Overwrite scaffold files during C<install> that would otherwise be
+preserved by their manifest policy.
 
 =item C<--log-level|-l> LEVEL
 
@@ -280,10 +311,12 @@ Display usage information.
 =head1 CONFIGURATION
 
 Your Lambda's configuration - function name, memory, timeout, trigger
-details, and so on - lives in C<lambda.env>, a flat C<KEY = value> file
-that C<Makefile.mk> reads via C<-include lambda.env>. Every field has a
-corresponding entry in C<lambda-mapping.yml> (installed as part of this
-distribution), which also defines each field's default.
+type, trigger details, and so on - lives in C<lambda.env>, a flat
+C<KEY = value> file that C<Makefile.mk> reads via C<-include lambda.env>.
+Every field has a corresponding entry in C<lambda-mapping.yml> (installed
+as part of this distribution), which defines each field's C<env> name,
+default, whether it is C<required>, and which trigger types it
+C<applies_to>.
 
 C<lambda.env> can be managed in either of two ways:
 
@@ -307,12 +340,38 @@ the next time C<lambda.yaml> changes.
 To move an existing C<lambda.env> to the C<lambda.yaml> workflow, run
 C<alr-builder generate-yaml> once.
 
+=head2 Trigger types
+
+C<trigger.type> (C<TRIGGER_TYPE>) selects the event source and the
+pipeline that provisions it:
+
+=over 4
+
+=item * B<s3-sqs> - S3 object events delivered through an SQS queue (with
+a dead-letter queue and configurable reserved concurrency). The recommended
+pattern for serialized, at-least-once processing.
+
+=item * B<s3-direct> - S3 bucket notifications invoking the Lambda directly.
+
+=item * B<eventbridge> - an EventBridge scheduled rule.
+
+=item * B<sns> - an SNS topic subscription.
+
+=item * B<alb> - an Application Load Balancer listener rule forwarding a
+path to the Lambda (requires an existing ALB and HTTPS listener).
+
+=back
+
+A Function URL with streaming responses is also available for any function
+(see C<lambda-function-url> and C<test-streaming> in L</MAKEFILE TARGETS>);
+it is independent of C<TRIGGER_TYPE>.
+
 =head2 lambda.yaml structure
 
-For the C<s3-sqs> trigger type (currently the only supported type):
+Fields common to every trigger type:
 
   image:
-    repo: ...            # ECR repository name (REPO_NAME)
+    repo: ...            # ECR repository / image name (REPO_NAME)
     handler: ...         # Perl handler class (HANDLER_CLASS) - required
   lambda:
     name: ...            # function name (FUNCTION_NAME)
@@ -322,13 +381,22 @@ For the C<s3-sqs> trigger type (currently the only supported type):
   role:
     name: ...            # IAM role name (ROLE_NAME)
     profile: ...         # named policy profile (ROLE_PROFILE)
+  log_retention: ...     # CloudWatch retention in days (LOG_RETENTION)
+  platform_image: ...    # optional platform layer image (PLATFORM_IMAGE)
+  overlay: ...           # optional overlay image name (OVERLAY)
+  trigger:
+    type: ...            # one of s3-sqs, s3-direct, eventbridge, sns, alb - required
+
+Trigger-specific C<trigger:> keys, by C<type>:
+
+  # s3-sqs
   trigger:
     type: s3-sqs
     bucket: ...          # source S3 bucket (BUCKET_NAME) - required
     prefix: ...          # key prefix filter (KEY_PREFIX)
     event: ...           # S3 event type (S3_EVENT)
     queue:
-      name: ...                     # SQS queue name (QUEUE_NAME)
+      name: ...                     # (QUEUE_NAME)
       batch_size: ...               # (BATCH_SIZE)
       visibility_timeout: ...       # seconds (VISIBILITY_TIMEOUT)
       retention: ...                # seconds (RETENTION)
@@ -338,10 +406,34 @@ For the C<s3-sqs> trigger type (currently the only supported type):
         name: ...          # DLQ name (DLQ_NAME)
         retention: ...     # seconds (DLQ_RETENTION)
 
-C<image.handler> is required for every trigger type; C<trigger.bucket> is
-additionally required for C<s3-sqs>. Every other field may be omitted, in
-which case C<lambda-mapping.yml>'s default applies. See L</MAKEFILE
-TARGETS> for how C<role.profile> is applied.
+  # s3-direct
+  trigger:
+    type: s3-direct
+    bucket: ...          # source S3 bucket (BUCKET_NAME) - required
+    prefix: ...          # key prefix filter (KEY_PREFIX)
+    event: ...           # S3 event type (S3_EVENT)
+
+  # eventbridge
+  trigger:
+    type: eventbridge
+    schedule: ...        # schedule expression (SCHEDULE_EXPRESSION)
+    rule_name: ...       # rule name (RULE_NAME)
+
+  # sns
+  trigger:
+    type: sns
+    topic_name: ...      # SNS topic name (TOPIC_NAME) - required
+
+  # alb
+  trigger:
+    type: alb
+    listener_arn: ...    # existing HTTPS listener ARN (LISTENER_ARN) - required
+    path: ...            # path pattern to route (ALB_PATH)
+    priority: ...        # listener-rule priority (RULE_PRIORITY)
+
+Every field except the ones marked B<required> may be omitted, in which
+case C<lambda-mapping.yml>'s default applies. See L</MAKEFILE TARGETS> for
+how C<role.profile> is applied.
 
 =head1 WORKFLOW
 
@@ -364,110 +456,153 @@ B<Verify your environment>:
 
 =item 3.
 
-B<Implement your handler> - edit C<LambdaHandler.pm.in> or create your
-own handler module. Add dependencies to C<cpanfile>.
+B<Implement your handler> - edit C<LambdaHandler.pm> or create your own
+handler module, and add its dependencies to your distribution's
+C<cpanfile>/C<META.json>.
 
 =item 4.
 
-B<Build a CPAN distribution> - C<install> provides a template handler
-module (C<LambdaHandler.pm.in>); turn it into a standard CPAN
-distribution (with its own C<META.json>/C<Makefile.PL> or equivalent)
-using whatever tooling you prefer, then run C<make dist> to produce a
-distribution tarball. C<make image> resolves C<DIST_TARBALL> to the most
-recent C<$(DIST_NAME)-*.tar.gz> in C<$(BUILDER_HOME)>, where C<DIST_NAME>
-comes from that distribution's C<META.json>.
+B<Configure the Lambda> - set C<TRIGGER_TYPE> and C<HANDLER_CLASS> (both
+required) plus any trigger-specific values, either by editing
+C<lambda.env> or by writing a C<lambda.yaml> (see L</CONFIGURATION>).
 
 =item 5.
 
-B<First-time deployment> - builds the image, pushes to ECR, creates the
-IAM role and Lambda function:
-
-  make lambda-function
+B<Build a CPAN distribution> - turn your handler into a standard CPAN
+distribution and run C<make dist> (or your equivalent) to produce a
+tarball. C<make image> resolves C<DIST_TARBALL> to the most recent
+C<$(DIST_NAME)-*.tar.gz> in C<$(BUILDER_HOME)>, where C<DIST_NAME> comes
+from that distribution's C<META.json>.
 
 =item 6.
 
-B<Test>:
+B<Deploy> - provision the image, role, function, log group, and the event
+source for your trigger type in one step:
 
-  make invoke
+  make lambda-pipeline
 
 =item 7.
+
+B<Test>:
+
+  make invoke          # or: make test-streaming (Function URL)
+
+=item 8.
 
 B<Deploy subsequent changes>:
 
   make update-function
+
+=item 9.
+
+B<Tear down> when finished:
+
+  make lambda-teardown
 
 =back
 
 =head2 Phase 1 - Build the container image
 
 C<make image> requires a CPAN distribution tarball
-(C<$(DIST_NAME)-*.tar.gz>) to already exist in C<$(BUILDER_HOME)> -
-see Workflow step 4.
+(C<$(DIST_NAME)-*.tar.gz>) to already exist in C<$(BUILDER_HOME)> - see
+Workflow step 5.
 
-Lambda runs your handler inside an OCI-compliant container image. The
-image must contain a Perl interpreter, your CPAN dependencies,
-C<Amazon::Lambda::Runtime>, the C<bootstrap> entrypoint, the C<plambda.pl>
-driver, and your handler module.
+The image is built in layers:
 
-The installed Dockerfile handles all of this. Build with:
+=over 4
+
+=item * B<perl-lambda-base> - the runtime base image, containing the Perl
+interpreter, the C<bootstrap> entrypoint, the C<plambda.pl> driver, and
+all C<Amazon::Lambda::Runtime> dependencies. The handler image is built
+C<FROM> this base.
+
+=item * B<platform (optional)> - a layer between the base and the handler,
+for stable, infrequently-changing artifacts (data files, toolchains,
+shared dependencies). Enabled by setting C<PLATFORM_IMAGE> and providing a
+C<Dockerfile.platform>; see the C<platform> target.
+
+=item * B<handler> - your distribution, installed on top with C<cpm>.
+
+=back
+
+The framework Dockerfile handles all of this. Build with:
 
   make image
 
-The key Dockerfile directives that wire everything together:
+The builder stage installs your distribution and its prerequisites with
+C<cpm> (resolving through C<RESOLVER> if a DarkPAN is configured), then the
+final stage copies the installed tree onto C<${PLATFORM_IMAGE}> (default
+C<perl-lambda-base:latest>). The handler is selected at build time by class
+name:
 
- ARG LAMBDA_MODULE=LambdaHandler.pm
- COPY ${LAMBDA_MODULE} /usr/src/app/local/lib/perl5
+  ARG HANDLER_CLASS="LambdaHandler"
+  ENV LAMBDA_MODULE=${HANDLER_CLASS}
+  ENTRYPOINT ["/usr/local/bin/bootstrap"]
 
- ENV PERL5LIB=/usr/src/app/local/lib/perl5
- ENV LAMBDA_MODULE=${LAMBDA_MODULE}
+C<HANDLER_CLASS> is required (the build errors without it) and is passed
+automatically from C<lambda.env>. C<ENV LAMBDA_MODULE> tells C<bootstrap>
+which handler class to load.
 
- ENTRYPOINT ["/usr/local/bin/bootstrap"]
+To reinstall modules that are also under active development - overriding
+the versions resolved from CPAN/DarkPAN - list them (one bare
+C<Module@version> per line) in a C<requires.reinstall> file in the project
+root. When present it is copied into the build context and reinstalled in
+a dedicated layer. Because that layer is otherwise cached, change
+C<CACHE_BUST> (or the file's contents) to force it to re-run.
 
-C<ENV LAMBDA_MODULE> tells C<bootstrap> which handler to load.
-Set C<LAMBDA_MODULE> at build time to use a different handler module:
+=head2 Phase 2 - Provision function and event source
 
-  make image LAMBDA_MODULE=MyHandler.pm
+C<make lambda-pipeline> is the single entry point. It:
 
-=head2 Phase 2 - Deploy and create the Lambda function
+=over 4
 
-Once the image is built it must be pushed to ECR and the Lambda function
-created or updated.
+=item 1.
 
-For a first-time deployment, a single target runs the full dependency
-chain automatically:
+builds the platform image first if C<PLATFORM_IMAGE> is set and a
+C<Dockerfile.platform> is present;
 
-  make lambda-function
+=item 2.
 
-This runs: C<ecr-repo> => C<deploy> => C<lambda-role> => C<lambda-policies>
-=> C<lambda-function>. Each step is idempotent - re-running is always safe.
-Sentinel files track completed steps so C<make> skips what already exists.
+dispatches on C<TRIGGER_TYPE> to the matching per-type pipeline
+(C<lambda-sqs-pipeline>, C<lambda-s3-pipeline>,
+C<lambda-eventbridge-pipeline>, C<lambda-sns-pipeline>, or
+C<lambda-alb-pipeline>), each of which builds and pushes the image,
+creates the IAM role and attaches policies, creates the function, applies
+memory/timeout and the log-group retention policy, and wires the trigger;
+
+=item 3.
+
+builds and applies the C<overlay> image last if C<OVERLAY> is set.
+
+=back
+
+Every step is idempotent and tracked by sentinel files under
+C<.cache/$(FUNCTION_NAME)>, so re-running skips work that is already done.
 
 To deploy a code change:
 
   make update-function
 
 This rebuilds the image, pushes to ECR using the image digest (never
-C<:latest>), and updates the Lambda function code.
+C<:latest>), and updates the function code - and, if C<OVERLAY> is set,
+rebuilds and re-applies the overlay.
 
-=head2 Phase 3 - Configure event triggers
+=head2 Phase 3 - Teardown
 
-The installed Makefile already includes all five trigger makefiles, so
-all trigger targets are available immediately. Use whichever targets
-apply to your Lambda:
+  make lambda-teardown
 
-  make lambda-sqs-trigger QUEUE_NAME=my-queue
-  make lambda-s3-trigger  BUCKET_NAME=my-bucket
-  make lambda-eventbridge-trigger
-  make lambda-function-url
-  make test-streaming
+Dispatches on C<TRIGGER_TYPE> to the matching teardown, removes the
+overlay (if C<OVERLAY> is set), and deletes the CloudWatch log group.
+Shared resources are treated conservatively: an SNS topic is B<not>
+deleted by default (it may have other subscribers), and the platform ECR
+repository must be removed manually (see C<platform-teardown>).
 
-See L</MAKEFILE TARGETS> for the full list of targets provided by each
-trigger makefile and the variables that control their behavior.
+=head2 The policies files
 
-=head2 The policies File
+Two mechanisms control the Lambda execution role's permissions:
 
-The C<policies> file controls which IAM managed policies are attached
-to the Lambda execution role. Add one policy ARN per line:
+B<Managed policies> - the C<policies> file (C<POLICIES_FILE>) lists AWS
+managed policy ARNs, one per line:
 
  # required - CloudWatch logging
  arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
@@ -478,68 +613,183 @@ to the Lambda execution role. Add one policy ARN per line:
  # uncomment for S3 read access
  # arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
 
-Apply changes at any time:
+If C<ROLE_PROFILE> is set instead, the managed policies come from that
+profile's list in C<profiles.yml>.
 
-  make update-policies
+B<Inline custom policies> - a C<custom-policies.json>
+(C<CUSTOM_POLICIES_FILE>) document, if present, is applied as an inline
+role policy. Use this to scope permissions to a specific bucket, queue, or
+topic ARN.
+
+Apply changes at any time with C<make update-policies> (managed + inline),
+or C<make update-managed-policies> / C<make update-inline-policies>
+individually.
 
 B<Note:> receiving an event from a service does not automatically grant
 your handler permission to call that service's APIs. An S3 trigger allows
 Lambda to invoke your function - it does not allow your function to read
-or write S3 objects. For broad access, add or uncomment the appropriate
-managed policy ARN in the C<policies> file and run C<make update-policies>.
-For access to a specific resource - a particular bucket, queue, or topic -
-create a custom IAM policy that scopes the permissions to that resource ARN
-and attach it to the execution role (C<ROLE_NAME>) via the AWS console or
-CLI, then add its ARN to the C<policies> file so C<make update-policies>
-keeps it attached on subsequent deployments.
+or write S3 objects. Add the appropriate managed policy ARN to C<policies>,
+or scope a specific resource in C<custom-policies.json>, then re-run
+C<make update-policies>.
 
 =head1 MAKEFILE VARIABLES
 
-For C<s3-sqs> configuration (function name, memory, timeout, queue
-settings, and so on), see L</CONFIGURATION> and C<lambda-mapping.yml>.
-The variables below are either tool-level (apply regardless of trigger
-type) or specific to trigger types not yet covered by C<lambda.yaml>.
+For the per-trigger configuration values (queue settings, schedule, topic,
+listener, and so on) see L</CONFIGURATION> and C<lambda-mapping.yml>. The
+variables below are tool-level or build-level and apply across trigger
+types.
+
+=head2 Identity and image
 
 =over 4
 
+=item C<HANDLER_CLASS>
+
+Perl handler B<class> name (e.g. C<LambdaHandler>), not a filename.
+Required - the build errors if unset.
+
+=item C<TRIGGER_TYPE>
+
+Event source pattern: C<s3-sqs>, C<s3-direct>, C<eventbridge>, C<sns>, or
+C<alb>. Required for C<lambda-pipeline>/C<lambda-teardown>.
+
+=item C<REPO_NAME>
+
+ECR repository and local image name. Default: C<perl-lambda>.
+
+=item C<FUNCTION_NAME>
+
+Lambda function name. Default: C<lambda-handler>.
+
+=item C<ROLE_NAME>
+
+IAM execution role name. Default: C<lambda-role>.
+
 =item C<AWS_PROFILE>
 
-AWS profile. Default: C<default>
+AWS profile. Default: C<default>.
 
 =item C<REGION>
 
-AWS region. Default: C<us-east-1>
-
-=item C<PERL_LAMBDA>
-
-Docker image name (local). Default: C<perl-lambda>
-
-=item C<LAMBDA_MODULE>
-
-Your handler module filename. Default: C<LambdaHandler.pm>
-
-=item C<PAYLOAD>
-
-Payload file for C<make invoke>. Default: C<payload.json>
+AWS region. Default: C<us-east-1>.
 
 =item C<AWS_ACCOUNT>
 
-AWS account ID. Resolved automatically via C<alr-helper get-account>
-if not set. Set it explicitly to avoid the STS call:
+AWS account ID. Resolved automatically via C<alr-helper get-account> if
+not set. Set it explicitly to avoid the STS call:
 
   export AWS_ACCOUNT=$(alr-helper get-account)
 
-=item C<RULE_NAME>
+=item C<BUILDER_HOME>
 
-EventBridge rule name. Default: C<lambda-handler-test>
+Directory searched for the distribution tarball. Default: the current
+directory.
 
-=item C<SCHEDULE_EXPRESSION>
+=item C<DIST_NAME>
 
-EventBridge schedule. Default: C<rate(1 minute)>
+Distribution name used to match the tarball. Default: the basename of the
+current directory.
+
+=item C<DIST_TARBALL>
+
+The tarball to build. Default: the highest-versioned
+C<$(DIST_NAME)-*.tar.gz> in C<$(BUILDER_HOME)>.
+
+=item C<PAYLOAD>
+
+Payload file for C<make invoke>. Default: C<payload-sns.json>.
+
+=back
+
+=head2 Build
+
+=over 4
+
+=item C<RESOLVER>
+
+DarkPAN resolver passed to C<cpm> (e.g.
+C<02packages,https://cpan.openbedrock.net/orepan2>). Default: unset (public
+CPAN).
+
+=item C<PLATFORM_IMAGE>
+
+Platform layer image the handler image is built C<FROM>. Default: the
+Dockerfile's own default, C<perl-lambda-base:latest>.
+
+=item C<OVERLAY>
+
+Overlay image name. When set, C<lambda-pipeline>/C<update-function> build
+and apply an overlay image after the handler image.
+
+=item C<EXTRA_BUILD_PACKAGES>
+
+Extra Debian packages installed in the builder stage (for XS modules that
+need build-time libraries, e.g. C<libssl-dev>).
+
+=item C<EXTRA_RUNTIME_PACKAGES>
+
+Extra Debian packages for the runtime layer (for XS modules that need
+shared libraries at run time).
+
+=item C<CACHE_BUST>
+
+Arbitrary value used to invalidate the C<requires.reinstall> layer.
+
+=item C<NOCACHE>
+
+Passed through to C<docker build> (set to C<--no-cache> to force a clean
+build).
+
+=back
+
+=head2 Function configuration and logging
+
+=over 4
+
+=item C<MEMORY>
+
+Function memory in MB. Default: C<128>.
+
+=item C<TIMEOUT>
+
+Function timeout in seconds. Default: C<30>.
+
+=item C<CONCURRENCY>
+
+Reserved concurrency. Default: C<1>.
+
+=item C<LOG_RETENTION>
+
+CloudWatch log-group retention in days. Default: C<1>.
+
+=back
+
+=head2 Policies
+
+=over 4
+
+=item C<POLICIES_FILE>
+
+File of AWS managed policy ARNs. Default: C<policies>.
+
+=item C<CUSTOM_POLICIES_FILE>
+
+Inline role-policy document. Default: C<custom-policies.json>.
+
+=item C<ROLE_PROFILE>
+
+Named profile in C<profiles.yml> whose managed policies are attached
+instead of those in C<POLICIES_FILE>.
+
+=back
+
+=head2 Function URL / streaming
+
+=over 4
 
 =item C<INVOKE_MODE>
 
-Lambda Function URL invoke mode. Default: C<RESPONSE_STREAM>
+Lambda Function URL invoke mode. Default: C<RESPONSE_STREAM>.
 
 =back
 
@@ -549,78 +799,93 @@ Lambda Function URL invoke mode. Default: C<RESPONSE_STREAM>
 
 =over 4
 
+=item C<lambda-pipeline>
+
+Provision everything for the configured C<TRIGGER_TYPE>: platform image
+(if applicable), handler image, ECR push, IAM role and policies, function,
+memory/timeout, log-group retention, the event-source wiring, and the
+overlay (if C<OVERLAY> is set). This is the target to run - and to re-run
+after editing C<lambda.yaml>/C<lambda.env>.
+
+=item C<lambda-teardown>
+
+Deprovision the function and its trigger-type infrastructure, remove the
+overlay (if set), and delete the log group.
+
 =item C<lambda-function>
 
-First-time deployment. Runs the full dependency chain: ECR repository,
-IAM role, policies, image build, push, and function creation. Run once
-per function.
+Create (or update) just the Lambda function from the pushed image - a
+component of the pipelines.
 
 =item C<update-function>
 
-Deploy a code change. Rebuilds the image, pushes to ECR, and updates the
-Lambda function code.
+Deploy a code change: rebuild the image, push to ECR by digest, update the
+function code, and re-apply the overlay if C<OVERLAY> is set.
 
 =item C<invoke>
 
-Test the function with C<$(PAYLOAD)> and print the response.
+Invoke the function with C<$(PAYLOAD)> and print the response.
+
+=item C<lambda-configuration> / C<update-lambda-configuration>
+
+Apply (or force re-apply) the function's memory and timeout from
+C<lambda.env>. C<lambda-configuration> also ensures the log group and its
+retention policy exist.
+
+=item C<update-policies>
+
+Re-attach all IAM policies - managed and inline. See
+C<update-managed-policies> and C<update-inline-policies> for the halves.
 
 =item C<clean>
 
 Remove local sentinel files. AWS resources are not affected.
 
-=item C<update-policies>
-
-Re-attach IAM policies to the execution role. If C<ROLE_PROFILE> is set
-(in C<lambda.env>/C<lambda.yaml>), attaches the policies listed for that
-profile in C<profiles.yml>; otherwise, attaches the policies listed in
-the C<policies> file.
-
-=item C<lambda-configuration>
-
-Updates the function's memory and timeout from C<lambda.env> (C<MEMORY>,
-C<TIMEOUT>) via C<UpdateFunctionConfiguration>. Useful for applying a
-configuration-only change without rebuilding the image.
-
 =back
 
-=head2 Event Trigger Targets
+=head2 Per-trigger Pipelines
+
+Each provisions the full stack for its trigger type and has a matching
+teardown. C<lambda-pipeline> dispatches to the right one based on
+C<TRIGGER_TYPE>; run one directly only if you want to bypass the dispatch.
+
+  lambda-sqs-pipeline          / lambda-sqs-teardown
+  lambda-s3-pipeline           / lambda-s3-teardown
+  lambda-eventbridge-pipeline  / lambda-eventbridge-teardown
+  lambda-sns-pipeline          / lambda-sns-teardown
+  lambda-alb-pipeline          / lambda-alb-teardown
+
+=head2 Event Trigger and Function URL Targets
 
 =over 4
 
 =item C<lambda-sqs-trigger>
 
-Creates an SQS queue (C<QUEUE_NAME>) and attaches it as an event source.
-Requires C<AWSLambdaSQSQueueExecutionRole> in the C<policies> file. A
-component of C<lambda-sqs-pipeline>; run that instead unless you
-specifically need just the queue/event-source step.
-
-=item C<lambda-sqs-pipeline>
-
-Runs the full C<s3-sqs> trigger setup: creates the SQS queue and DLQ,
-configures the S3-to-SQS event source mapping, sets reserved concurrency
-(C<CONCURRENCY>), applies C<lambda-configuration> (C<MEMORY>/C<TIMEOUT>),
-and sets the event source mapping's C<FunctionResponseTypes> according to
-C<PARTIAL_BATCH_RESPONSE>. This is the target to run - or re-run after
-editing C<lambda.yaml>/C<lambda.env> - for C<s3-sqs> projects.
+Creates the SQS queue and DLQ and attaches the queue as an event source. A
+component of C<lambda-sqs-pipeline>.
 
 =item C<lambda-s3-trigger>
 
 Configures S3 bucket notifications to invoke the Lambda on C<S3_EVENT>
-events.
+events (used by C<s3-direct>; C<s3-sqs> routes S3 notifications to the
+queue instead).
+
+=item C<lambda-sns-trigger>
+
+Subscribes the Lambda to the SNS topic (creating the topic and permission
+as needed).
 
 =item C<lambda-eventbridge-trigger>
 
-Registers the Lambda as the target of an EventBridge scheduled rule.
+Registers the Lambda as the target of the EventBridge rule.
 
 =item C<enable-eventbridge-rule> / C<disable-eventbridge-rule>
 
 Enables or disables the EventBridge rule without deleting infrastructure.
-Use C<disable-eventbridge-rule> after testing to stop scheduled invocations.
 
 =item C<delete-eventbridge-rule>
 
-Removes targets and deletes the rule. Targets must be removed before the
-rule can be deleted.
+Removes targets and deletes the rule.
 
 =item C<lambda-function-url>
 
@@ -633,28 +898,56 @@ Invokes the Function URL with C<curl -sN> to test streaming responses.
 
 =back
 
+=head2 Image Layer Targets
+
+=over 4
+
+=item C<platform> / C<platform-teardown>
+
+Build and push the platform layer image from C<Dockerfile.platform>, then
+invalidate the handler-image sentinels so the next build picks it up.
+Teardown clears the sentinels; the ECR repository must be deleted
+manually.
+
+=item C<overlay> / C<overlay-teardown>
+
+Build an overlay image and update the Lambda function to it directly.
+Teardown deletes the overlay ECR repository and clears its sentinels.
+
+=item C<log-group> / C<log-group-teardown>
+
+Create the function's CloudWatch log group and set its retention policy
+(C<LOG_RETENTION>); teardown deletes the log group. C<log-group> is a
+dependency of C<lambda-configuration>.
+
+=back
+
 =head2 Internal Targets
 
-Called automatically as dependencies - you should not need to invoke
-these directly:
+Called automatically as dependencies - you should not need to invoke these
+directly:
 
 C<image> - builds the Docker image.
-C<ecr-repo> - creates the ECR repository if it does not exist.
-C<deploy> - logs in to ECR and pushes the image using the image digest.
-C<lambda-role> - creates the IAM execution role if it does not exist.
-C<lambda-policies> - attaches policies to the execution role, either from
-C<profiles.yml> (if C<ROLE_PROFILE> is set) or the C<policies> file.
-C<lambda-concurrency> - sets reserved concurrency (C<CONCURRENCY>) via
+C<tarball-validated> - verifies the tarball contains C<HANDLER_CLASS>.
+C<ecr-repo> - creates the ECR repository (with lifecycle policy) if absent.
+C<deploy> - logs in to ECR and pushes the image.
+C<image-digest> - resolves the pushed image's digest.
+C<lambda-role> - creates the IAM execution role if absent.
+C<lambda-managed-policies> / C<lambda-inline-policies> - attach managed and
+inline policies.
+C<lambda-concurrency> - sets reserved concurrency via
 C<PutFunctionConcurrency>.
 C<lambda-sqs-response-types> - sets the SQS event source mapping's
-C<FunctionResponseTypes> according to C<PARTIAL_BATCH_RESPONSE>.
+C<FunctionResponseTypes> from C<PARTIAL_BATCH_RESPONSE>.
 C<policy-document> - generates the IAM assume-role trust policy JSON.
+The image build also derives a C<cpanfile> and Debian package list from the
+distribution tarball on the fly.
 
 =head1 REQUIRED IAM PERMISSIONS
 
-The C<check> command verifies these permissions via
-C<SimulatePrincipalPolicy>. You will need them to run the full build and
-deploy workflow.
+The C<check> command verifies the following permissions via
+C<SimulatePrincipalPolicy>. They cover the core build-and-deploy path for
+all trigger types.
 
 =head3 ECR
 
@@ -697,13 +990,42 @@ assumed by Lambda even though the role exists and appears correct.
  events:DisableRule
  sts:GetCallerIdentity
 
+=head3 Additional permissions (not verified by check)
+
+Some features and teardown paths call APIs that C<check> does not yet
+simulate. You will need these in addition to the list above when the
+corresponding feature is used:
+
+=over 4
+
+=item * B<CloudWatch Logs> (C<log-group> / retention): C<logs:CreateLogGroup>,
+C<logs:PutRetentionPolicy>, C<logs:DescribeLogGroups>,
+C<logs:DeleteLogGroup>, C<logs:DeleteRetentionPolicy>.
+
+=item * B<ALB triggers>: C<elasticloadbalancing:*> for target groups and
+listener rules (C<CreateTargetGroup>, C<RegisterTargets>, C<CreateRule>,
+C<DescribeTargetGroups>, C<DescribeRules>, and their C<Delete>/C<Deregister>
+counterparts).
+
+=item * B<Inline custom policies> (C<custom-policies.json>):
+C<iam:PutRolePolicy> (and C<iam:DeleteRolePolicy> for teardown).
+
+=item * B<Reserved concurrency>: C<lambda:PutFunctionConcurrency>.
+
+=item * B<Full lifecycle / teardown>: broader C<sqs:*>, C<sns:*>, and
+C<s3:*> operations (queue/subscription/notification deletion, attribute
+reads) beyond the create-and-list actions above.
+
+=back
+
 =head3 Handler Runtime Permissions
 
 C<AWSLambdaBasicExecutionRole> covers CloudWatch logging only. Any AWS
-APIs your handler calls directly require additional policies in the
-C<policies> file. For example, a handler that reads S3 objects needs
-C<AmazonS3ReadOnlyAccess> even if its trigger is an S3 event notification
-- the trigger and the API access are governed by separate policies.
+APIs your handler calls directly require additional policies - via the
+C<policies> file (managed) or C<custom-policies.json> (inline). For
+example, a handler that reads S3 objects needs C<AmazonS3ReadOnlyAccess> or
+an equivalent scoped policy even if its trigger is an S3 event -
+the trigger and the API access are governed by separate policies.
 
 =head1 OPTIONAL DEPENDENCIES
 

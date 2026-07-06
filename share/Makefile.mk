@@ -31,13 +31,16 @@ AWS_PROFILE   ?= default
 REGION        ?= us-east-1
 AWS_ACCOUNT   ?= $(shell alr-helper get-account)
 NOCACHE       ?=
-PAYLOAD       ?= payload-sns.json
 TIMEOUT       ?= 30
 BUILDER_HOME  ?= $(CURDIR)
 CACHE_DIR     := $(BUILDER_HOME)/.cache/$(FUNCTION_NAME)
 NO_ECHO       ?= @
 DIST_NAME     ?= $(notdir $(CURDIR))
 DIST_TARBALL  ?= $(shell ls $(BUILDER_HOME)/$(DIST_NAME)-*.tar.gz 2>/dev/null | sort -V | tail -1)
+
+PAYLOAD ?= $(firstword $(wildcard payload-$(TRIGGER_TYPE).json) \
+                       $(wildcard $(FRAMEWORK_DIR)/payload-$(TRIGGER_TYPE).json) \
+                       payload.json)
 
 # Used when BUILDING Perl XS based modules that require additional
 # libraries (ex: libssl-dev, etc)
@@ -63,12 +66,6 @@ ifneq ($(NEEDS_TARBALL),)
 ifeq ($(DIST_TARBALL),)
   $(error No tarball found in $(BUILDER_HOME) - run 'make dist' first)
 endif
-endif
-
-ifdef REBUILD
-REBUILD_ARG = --build-arg DARKPAN_REBUILD=$(shell date +%s)
-else
-REBUILD_ARG =
 endif
 
 lambda-policies:            $(CACHE_DIR)/lambda-policies ## attach IAM policies to execution role
@@ -138,7 +135,7 @@ $(CACHE_DIR)/image: \
 	if [[ -n "$(RESOLVER)" ]]; then \
 	  resolver="--build-arg RESOLVER=\"--resolver $(RESOLVER)\""; \
 	fi; \
-	docker build $(NOCACHE) $(REBUILD_ARG) \
+	docker build $(NOCACHE) \
 	  --build-arg DIST_TARBALL=$$(basename $(DIST_TARBALL)) \
 	  --build-arg CACHE_BUST="$(CACHE_BUST)" \
 	  --build-arg HANDLER_CLASS=$(HANDLER_CLASS) \

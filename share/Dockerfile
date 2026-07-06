@@ -65,8 +65,17 @@ FROM ${PLATFORM_IMAGE}
 ########################################################################
 
 ARG HANDLER_CLASS="LambdaHandler"
+ARG EXTRA_RUNTIME_PACKAGES=""
 
 WORKDIR /usr/src/app
+
+# Handler-specific runtime shared libraries (no-op when unset)
+RUN if [ -n "${EXTRA_RUNTIME_PACKAGES}" ]; then \
+      apt-get update --fix-missing && \
+      apt-get install -y --no-install-recommends ${EXTRA_RUNTIME_PACKAGES} && \
+      apt-get clean && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # Add only the handler distribution — everything else is in the base image
 COPY --from=builder /usr/src/app/local /usr/src/app/local

@@ -7,8 +7,8 @@
 # make delete-eventbridge-rule
 ########################################################################
 
-SCHEDULE_EXPRESSION ?= rate(1 minute)
-RULE_NAME           ?= lambda-handler-test
+SCHEDULE_EXPRESSION ?= rate(1 day)
+RULE_NAME           ?= lambda-handler-rule
 RULE_STATE          ?= ENABLED
 
 $(CACHE_DIR)/lambda-eventbridge-rule: | $(CACHE_DIR) ## create EventBridge schedule rule 

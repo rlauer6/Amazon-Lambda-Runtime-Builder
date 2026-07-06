@@ -1,0 +1,12 @@
+{
+  "Records": [
+    {
+      "eventSource": "aws:s3",
+      "eventName": "ObjectCreated:Put",
+      "s3": {
+        "bucket": { "name": "my-input-bucket" },
+        "object": { "key": "incoming/example.txt", "size": 42 }
+      }
+    }
+  ]
+}

@@ -194,7 +194,7 @@ sub _policy_arn {
 }
 
 ########################################################################
-sub cmd_attach_policies_from_profile {
+sub cmd_iam_attach_policies_from_profile {
 ########################################################################
   my ($self) = @_;
 
@@ -265,7 +265,7 @@ sub cmd_iam_detach_role_policy {
 }
 
 ########################################################################
-sub cmd_create_assume_policy {
+sub cmd_iam_create_assume_policy {
 ########################################################################
   my ($self) = @_;
 

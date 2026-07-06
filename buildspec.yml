@@ -34,9 +34,13 @@ extra-files:
       - share/ecr-login.mk
       - share/eventbridge.mk
       - share/payload-sns.json
+      - share/payload-s3-sqs.json
+      - share/payload-eventbridge.json
+      - share/payload-s3-direct.json
+      - share/payload-alb.json
+      - share/payload.json
       - share/policies
       - share/help.mk
-      - share/payload.json
       - share/s3.mk
       - share/sns.mk
       - share/sqs.mk
