@@ -326,6 +326,8 @@ sub main {
     'attach-policies-from-profile'     => \&cmd_attach_policies_from_profile,
     'attach-policy'                    => \&cmd_iam_attach_role_policy,
     'check'                            => \&cmd_check,
+    'create-alb-target-group'          => \&cmd_elbv2_create_alb_target_group,
+    'create-alb-listener-rule'         => \&cmd_elbv2_create_alb_listener_rule,
     'create-assume-policy'             => \&cmd_create_assume_policy,
     'create-bucket'                    => \&cmd_s3_create_bucket,
     'create-cpanfile'                  => \&cmd_create_cpanfile,
@@ -338,6 +340,7 @@ sub main {
     'create-repository'                => \&cmd_ecr_create_repository,
     'create-role'                      => \&cmd_iam_create_role,
     'create-topic'                     => \&cmd_sns_create_topic,
+    'delete-alb-listener-rule'         => \&cmd_elbv2_delete_alb_listener_rule,
     'delete-eventsource-mappings'      => \&cmd_lambda_delete_eventsource_mappings,
     'delete-function'                  => \&cmd_lambda_delete_function,
     'delete-function-url-config'       => \&cmd_lambda_delete_function_url_config,
@@ -354,13 +357,8 @@ sub main {
     'describe-load-balancers'          => \&cmd_elbv2_describe_load_balancers,
     'describe-log-groups'              => \&cmd_logs_describe_log_groups,
     'get-alb-target-group'             => \&cmd_elbv2_get_alb_target_group,
-    'create-alb-target-group'          => \&cmd_elbv2_create_alb_target_group,
-    'register-alb-target'              => \&cmd_elbv2_register_alb_target,
     'deregister-alb-target'            => \&cmd_elbv2_deregister_alb_target,
     'delete-alb-target-group'          => \&cmd_elbv2_delete_alb_target_group,
-    'get-alb-listener-rule'            => \&cmd_elbv2_get_alb_listener_rule,
-    'create-alb-listener-rule'         => \&cmd_elbv2_create_alb_listener_rule,
-    'delete-alb-listener-rule'         => \&cmd_elbv2_delete_alb_listener_rule,
     'describe-log-streams'             => \&cmd_logs_describe_log_streams,
     'describe-repositories'            => \&cmd_ecr_describe_repositories,
     'describe-rule'                    => \&cmd_eventbridge_describe_rule,
@@ -369,6 +367,7 @@ sub main {
     'disable-rule'                     => \&cmd_eventbridge_disable_rule,
     'enable-rule'                      => \&cmd_eventbridge_enable_rule,
     'get-account'                      => \&cmd_sts_get_account,
+    'get-alb-listener-rule'            => \&cmd_elbv2_get_alb_target_group,
     'get-bucket-notification'          => \&cmd_s3_get_bucket_notification_configuration,
     'get-function'                     => \&cmd_lambda_get_function,
     'get-function-arn'                 => \&cmd_lambda_get_function_arn,
@@ -392,6 +391,7 @@ sub main {
     'list-queues'                      => \&cmd_sqs_list_queues,
     'list-subscriptions'               => \&cmd_sns_list_subscriptions_by_topic,
     'list-topics'                      => \&cmd_sns_list_topics,
+    'modify-alb-listener-rule'         => \&cmd_elbv2_create_alb_listener_rule,
     'publish'                          => \&cmd_sns_publish,
     'put-bucket-notification'          => \&cmd_s3_put_bucket_notification_configuration,
     'put-function-concurrency'         => \&cmd_lambda_put_function_concurrency,
@@ -402,6 +402,7 @@ sub main {
     'put-rule-expression'              => \&cmd_eventbridge_put_rule_expression,
     'put-rule-pattern'                 => \&cmd_eventbridge_put_rule_pattern,
     'purge-queue'                      => \&cmd_sqs_purge_queue,
+    'register-alb-target'              => \&cmd_elbv2_register_alb_target,
     'remove-targets'                   => \&cmd_eventbridge_remove_targets,
     'remove-bucket-notification'       => \&cmd_s3_remove_bucket_notification_configuration,
     'remove-permission'                => \&cmd_lambda_remove_permission,
@@ -608,6 +609,10 @@ JSON file is slurped and used as the entire request body.
 
 =item B<create-alb-listener-rule> I<listener-arn> I<target-group-arn> [I<key=value> ...]
 
+[write] Create a listener rule that routes a path to a target group. The
+C<path:> value is treated as a regular expression (populating the rule
+condition's C<RegexValues>).
+
 [write] Add a listener rule that routes a path to a target group.
 
 =item B<create-alb-target-group> I<name>
@@ -642,7 +647,10 @@ JSON file is slurped and used as the entire request body.
 
 [read] Find a target group by name.
 
-=item B<register-alb-target> I<target-group-arn> I<function-name>
+=item B<modify-alb-listener-rule> I<rule-arn> I<target-group-arn> [I<key=value> ...]
+
+[write] Modify an existing listener rule in place (by rule ARN) - update its
+path (regex) condition and/or forward target without recreating the rule.
 
 [write] Register a Lambda into a target group.
 

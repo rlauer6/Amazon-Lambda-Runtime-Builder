@@ -1,7 +1,5 @@
 # Amazon::Lambda::Runtime::Builder — A Getting-Started Guide
 
-> **Complete draft.** §1–§14 and Appendices A–B. Framework notes for the source are tracked at the end.
-
 ---
 
 # Part I — Getting Started

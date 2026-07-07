@@ -18,7 +18,7 @@
 
 LISTENER_ARN  ?=
 ALB_PATH      ?= /build
-RULE_PRIORITY ?= 10
+RULE_PRIORITY ?= 999
 
 ########################################################################
 # grant ALB permission to invoke the Lambda function
@@ -72,28 +72,6 @@ $(CACHE_DIR)/alb-target-group-registration: \
 	echo "$$tg_arn" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
 
-########################################################################
-# create listener rule forwarding ALB_PATH to Lambda target group
-########################################################################
-$(CACHE_DIR)/alb-listener-rule: \
-    $(CACHE_DIR)/alb-target-group-registration | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ || true; \
-	tg_arn="$$(cat $(CACHE_DIR)/alb-target-group | \
-	  perl -MJSON -0ne 'print decode_json($$_)->{TargetGroupArn}//q{}')" ; \
-	rule="$$(alr-helper get-alb-listener-rule \
-	    $(LISTENER_ARN) \
-	    $(ALB_PATH) 2>/dev/null)"; \
-	if [[ -z "$$rule" || "$$rule" = "None" ]]; then \
-	    rule="$$(alr-helper create-alb-listener-rule \
-	        $(LISTENER_ARN) \
-	        $$tg_arn \
-	        path:$(ALB_PATH) \
-	        priority:$(RULE_PRIORITY))"; \
-	fi; \
-	test -z "$$rule" && { rm -f $@ && exit 1; }; \
-	echo "$$rule" > $@ || { rm -f $@ && exit 1; }; \
-	chmod 444 $@
-
 .PHONY: lambda-alb-pipeline
 lambda-alb-pipeline: \
     $(CACHE_DIR)/alb-listener-rule \
@@ -120,3 +98,46 @@ _lambda-alb-teardown:
 
 .PHONY: lambda-alb-teardown
 lambda-alb-teardown: _lambda-alb-teardown clean ## deprovision full ALB Lambda stack
+
+########################################################################
+# value stamp: rebuilds the listener rule only when ALB_PATH / priority change
+########################################################################
+$(CACHE_DIR)/alb-listener-rule.value: | $(CACHE_DIR)
+	$(NO_ECHO)printf '%s\n' "$(ALB_PATH) $(RULE_PRIORITY)" > $@.tmp; \
+	if ! cmp -s $@.tmp $@ 2>/dev/null; then \
+	    mv $@.tmp $@; \
+	else \
+	    rm -f $@.tmp; \
+	fi
+
+.PHONY: $(CACHE_DIR)/alb-listener-rule.value
+
+########################################################################
+# create or modify listener rule forwarding ALB_PATH to Lambda target group
+########################################################################
+$(CACHE_DIR)/alb-listener-rule: \
+    $(CACHE_DIR)/alb-target-group-registration \
+    $(CACHE_DIR)/alb-listener-rule.value | $(CACHE_DIR)
+	$(NO_ECHO)chmod -f 644 $@ || true; \
+	tg_arn="$$(dnk get TargetGroupArn -f json -i $(CACHE_DIR)/alb-target-group)"; \
+	rule_arn="$$(dnk get RuleArn -f json -i $@ 2>/dev/null || true)"; \
+	if [[ -n "$$rule_arn" && "$$rule_arn" != "None" ]]; then \
+	    rule="$$(alr-helper modify-alb-listener-rule \
+	        $$rule_arn \
+	        $$tg_arn \
+	        path:$(ALB_PATH))"; \
+	else \
+	    rule="$$(alr-helper get-alb-listener-rule \
+	        $(LISTENER_ARN) \
+	        $(ALB_PATH) 2>/dev/null)"; \
+	    if [[ -z "$$rule" || "$$rule" = "None" ]]; then \
+	        rule="$$(alr-helper create-alb-listener-rule \
+	            $(LISTENER_ARN) \
+	            $$tg_arn \
+	            path:$(ALB_PATH) \
+	            priority:$(RULE_PRIORITY))"; \
+	    fi; \
+	fi; \
+	test -z "$$rule" && { rm -f $@ && exit 1; }; \
+	echo "$$rule" > $@ || { rm -f $@ && exit 1; }; \
+	chmod 444 $@

@@ -358,7 +358,10 @@ pattern for serialized, at-least-once processing.
 =item * B<sns> - an SNS topic subscription.
 
 =item * B<alb> - an Application Load Balancer listener rule forwarding a
-path to the Lambda (requires an existing ALB and HTTPS listener).
+path to the Lambda. C<path> is a B<regular expression> matched against the
+request path. Requires an existing ALB; use an HTTPS listener for TLS. The
+rule is created on first deploy and modified in place when C<path> or
+C<priority> change.
 
 =back
 
@@ -424,12 +427,16 @@ Trigger-specific C<trigger:> keys, by C<type>:
     type: sns
     topic_name: ...      # SNS topic name (TOPIC_NAME) - required
 
-  # alb
-  trigger:
+trigger:
     type: alb
-    listener_arn: ...    # existing HTTPS listener ARN (LISTENER_ARN) - required
-    path: ...            # path pattern to route (ALB_PATH)
-    priority: ...        # listener-rule priority (RULE_PRIORITY)
+    listener_arn: ...    # existing listener ARN (LISTENER_ARN) - required
+    path: ...            # path regex to route (ALB_PATH; default /build)
+    priority: ...        # listener-rule priority (RULE_PRIORITY; default 999)
+
+C<priority> defaults to C<999> so that, on a shared ALB, this path-only rule
+is evaluated after any host-specific or more-specific rules already present.
+On a shared load balancer, prefer adding a host condition to scope the rule
+to your own hostname rather than relying on priority ordering alone.
 
 Every field except the ones marked B<required> may be omitted, in which
 case C<lambda-mapping.yml>'s default applies. See L</MAKEFILE TARGETS> for
@@ -1004,8 +1011,8 @@ C<logs:DeleteLogGroup>, C<logs:DeleteRetentionPolicy>.
 
 =item * B<ALB triggers>: C<elasticloadbalancing:*> for target groups and
 listener rules (C<CreateTargetGroup>, C<RegisterTargets>, C<CreateRule>,
-C<DescribeTargetGroups>, C<DescribeRules>, and their C<Delete>/C<Deregister>
-counterparts).
+C<ModifyRule>, C<DescribeTargetGroups>, C<DescribeRules>, and their
+C<Delete>/C<Deregister> counterparts).
 
 =item * B<Inline custom policies> (C<custom-policies.json>):
 C<iam:PutRolePolicy> (and C<iam:DeleteRolePolicy> for teardown).

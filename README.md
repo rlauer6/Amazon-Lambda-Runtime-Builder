@@ -266,7 +266,10 @@ pattern for serialized, at-least-once processing.
 - **eventbridge** - an EventBridge scheduled rule.
 - **sns** - an SNS topic subscription.
 - **alb** - an Application Load Balancer listener rule forwarding a
-path to the Lambda (requires an existing ALB and HTTPS listener).
+path to the Lambda. `path` is a **regular expression** matched against the
+request path. Requires an existing ALB; use an HTTPS listener for TLS. The
+rule is created on first deploy and modified in place when `path` or
+`priority` change.
 
 A Function URL with streaming responses is also available for any function
 (see `lambda-function-url` and `test-streaming` in ["MAKEFILE TARGETS"](#makefile-targets));
@@ -330,12 +333,16 @@ Trigger-specific `trigger:` keys, by `type`:
       type: sns
       topic_name: ...      # SNS topic name (TOPIC_NAME) - required
 
-    # alb
-    trigger:
-      type: alb
-      listener_arn: ...    # existing HTTPS listener ARN (LISTENER_ARN) - required
-      path: ...            # path pattern to route (ALB_PATH)
-      priority: ...        # listener-rule priority (RULE_PRIORITY)
+trigger:
+    type: alb
+    listener\_arn: ...    # existing listener ARN (LISTENER\_ARN) - required
+    path: ...            # path regex to route (ALB\_PATH; default /build)
+    priority: ...        # listener-rule priority (RULE\_PRIORITY; default 999)
+
+`priority` defaults to `999` so that, on a shared ALB, this path-only rule
+is evaluated after any host-specific or more-specific rules already present.
+On a shared load balancer, prefer adding a host condition to scope the rule
+to your own hostname rather than relying on priority ordering alone.
 
 Every field except the ones marked **required** may be omitted, in which
 case `lambda-mapping.yml`'s default applies. See ["MAKEFILE TARGETS"](#makefile-targets) for
@@ -832,8 +839,8 @@ corresponding feature is used:
 `logs:DeleteLogGroup`, `logs:DeleteRetentionPolicy`.
 - **ALB triggers**: `elasticloadbalancing:*` for target groups and
 listener rules (`CreateTargetGroup`, `RegisterTargets`, `CreateRule`,
-`DescribeTargetGroups`, `DescribeRules`, and their `Delete`/`Deregister`
-counterparts).
+`ModifyRule`, `DescribeTargetGroups`, `DescribeRules`, and their
+`Delete`/`Deregister` counterparts).
 - **Inline custom policies** (`custom-policies.json`):
 `iam:PutRolePolicy` (and `iam:DeleteRolePolicy` for teardown).
 - **Reserved concurrency**: `lambda:PutFunctionConcurrency`.

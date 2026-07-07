@@ -192,32 +192,47 @@ sub cmd_elbv2_create_alb_listener_rule {
 ########################################################################
   my ($self) = @_;
 
-  my ( $listener_arn, $tg_arn, @kv ) = $self->get_args;
+  my ( $arn, $tg_arn, @kv ) = $self->get_args;
 
-  die "ERROR: usage: create-alb-listener-rule listener-arn tg-arn path:PATH priority:N\n"
-    if !$listener_arn || !$tg_arn;
+  my $command = $self->command =~ /create/xsm ? 'create' : 'modify';
+
+  die sprintf "ERROR: usage: %s-alb-listener-rule %s-arn tg-arn path:PATH priority:N\n",
+    $command, $command eq 'create' ? 'listener' : 'rule'
+    if !$arn || !$tg_arn;
 
   my %args = map { split /:/xsm, $_, 2 } @kv;
 
-  my $path     = $args{path}     // '/';
-  my $priority = $args{priority} // 10;
+  my $path = $args{path} // q{/};
+
+  eval { qr/$path/; 1 }
+    or die "ERROR: $path is not a valid regex: $EVAL_ERROR";
+
+  warn "WARNING: $path is not anchored!\n"
+    if $path !~ /^[\^]/xsm;
+
+  my $priority = $args{priority} // 999;
+
+  my $conditions = [
+    { Field             => 'path-pattern',
+      PathPatternConfig => { RegexValues => [$path] }
+    },
+  ];
+
+  my $method = $command eq 'create' ? 'CreateRule' : 'ModifyRule';
 
   my $rule = eval {
-    my $rsp = $self->_elbv2->CreateRule(
-      { ListenerArn => $listener_arn,
-        Priority    => $priority + 0,
-        Conditions  => [
-          { Field  => 'path-pattern',
-            Values => [$path],
-          }
-        ],
-        Actions => [
+    my $rsp = $self->_elbv2->$method(
+      { $command eq 'create' ? ( ListenerArn => $arn ) : ( RuleArn => $arn ),
+        Priority   => $priority + 0,
+        Conditions => $conditions,
+        Actions    => [
           { Type           => 'forward',
             TargetGroupArn => $tg_arn,
           }
         ],
       }
     );
+
     return $rsp->{Rules}[0];
   };
 
