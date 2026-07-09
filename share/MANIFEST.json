@@ -1,9 +1,21 @@
 {
     "files": {
-        "LambdaHandler.pm" : { "dest" : "LambdaHandler.pm", "overwrite": "never" },
         "policies" : { "dest": "policies", "overwrite": "never" },
         "Makefile.builder": { "dest": "Makefile.builder", "overwrite": "always" }
     },
+    "templates": [
+        "Lambda/Handler.pm.tmpl",
+        "Lambda/Event/SNS.pm.tmpl",
+        "Lambda/Event/S3.pm.tmpl",
+        "Lambda/Event/SQS.pm.tmpl",
+        "Lambda/Event/ALB.pm.tmpl",
+        "Lambda/Event/EventBridge.pm.tmpl",
+        "lambda-alb.yaml.tmpl",
+        "lambda-eventbridge.yaml.tmpl",
+        "lambda-s3-direct.yaml.tmpl",
+        "lambda-s3-sqs.yaml.tmpl",
+        "lambda-sns.yaml.tmpl"
+    ],
     "dependencies": {
         "required": [
             "docker",

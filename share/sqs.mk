@@ -26,8 +26,7 @@ S3_EVENT           ?= s3:ObjectCreated:*
 CONCURRENCY        ?= 1
 
 $(CACHE_DIR)/sqs-queue-redrive: $(CACHE_DIR)/sqs-queue $(CACHE_DIR)/sqs-dlq | $(CACHE_DIR) ## ensure redrive policy is set on queue
-	$(NO_ECHO)policy="$$(alr-helper get-queue-attributes $(QUEUE_NAME) RedrivePolicy | \
-	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{Attributes}{RedrivePolicy}//q{}')"; \
+	$(NO_ECHO)policy="$$(alr-helper get-queue-attributes $(QUEUE_NAME) RedrivePolicy | dnk get Attributes.RedrivePolicy)"; \
 	if [[ -z "$$policy" ]]; then \
 	    alr-helper set-queue-redrive-policy \
 	        $(QUEUE_NAME) \
@@ -37,8 +36,7 @@ $(CACHE_DIR)/sqs-queue-redrive: $(CACHE_DIR)/sqs-queue $(CACHE_DIR)/sqs-dlq | $(
 	echo "$(QUEUE_NAME)" > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
 
 $(CACHE_DIR)/sqs-dlq: | $(CACHE_DIR) ## create dead letter queue
-	$(NO_ECHO)queue="$$(alr-helper list-queues | \
-	  perl -MJSON -0ne 'for(@{decode_json($$_)->{QueueUrls}//[]}){print if /\/$(DLQ_NAME)$$/}' 2>&1)"; \
+	$(NO_ECHO)queue="$$(alr-helper list-queues | dnk QueueUrls | grep $(DLQ_NAME))"; \
 	if echo "$$queue" | grep -q 'error\|Error'; then \
 	    echo "ERROR: list-queues failed: $$queue" >&2; \
 	    exit 1; \
@@ -54,8 +52,7 @@ $(CACHE_DIR)/sqs-dlq: | $(CACHE_DIR) ## create dead letter queue
 	chmod 444 $@
 
 $(CACHE_DIR)/sqs-queue: $(CACHE_DIR)/sqs-dlq | $(CACHE_DIR) ## create SQS queue with visibility timeout and redrive policy
-	$(NO_ECHO)queue="$$(alr-helper list-queues | \
-	  perl -MJSON -0ne 'for(@{decode_json($$_)->{QueueUrls}//[]}){print if /\/$(QUEUE_NAME)$$/}' 2>&1)"; \
+	$(NO_ECHO)queue="$$(alr-helper list-queues | dnk QueueUrls | grep $(QUEUE_NAME))"; \
 	if echo "$$queue" | grep -q 'error\|Error'; then \
 	    echo "ERROR: list-queues failed: $$queue" >&2; \
 	    exit 1; \
@@ -91,13 +88,12 @@ $(CACHE_DIR)/lambda-sqs-trigger: \
 	$(NO_ECHO)chmod -f 644 $@ || true; \
 	trigger="$$(alr-helper list-eventsource-mappings \
 	    $(FUNCTION_NAME) \
-	    queue:$(QUEUE_NAME) | \
-	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}')"; \
+	    queue:$(QUEUE_NAME) | dnk 'EventSourceMappings[0].UUID')"; \
 	if [[ -z "$$trigger" || "$$trigger" = "None" ]]; then \
 	  trigger="$$(alr-helper create-eventsource-mappings \
 	    $(FUNCTION_NAME) queue:$(QUEUE_NAME) \
 	    batch-size:$(BATCH_SIZE))"; \
-	  uuid=$$(echo "$$trigger" | perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{UUID}//q{}'); \
+	  uuid=$$(echo "$$trigger" | dnk UUID); \
 	  alr-helper wait-eventsource-mapping-enabled $$uuid; \
 	fi; \
 	test -z "$$trigger" && { rm -f $@ && exit 1; }; \
@@ -145,8 +141,7 @@ endif
 
 $(CACHE_DIR)/lambda-sqs-response-types: $(CACHE_DIR)/lambda-sqs-trigger lambda.env | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
-	uuid=$$(alr-helper list-eventsource-mappings $(FUNCTION_NAME) $(QUEUE_NAME) | \
-	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}'); \
+	uuid="$$(alr-helper list-eventsource-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | dnk 'EventSourceMappings[0].UUID')"; \
 	alr-helper wait-eventsource-mapping-enabled $$uuid; \
 	rsp="$$(alr-helper update-eventsource-mapping uuid:$$uuid $(RESPONSE_TYPES_ARG))"; \
 	test -n "$$rsp" || { rm -f $@ && exit 1; }; \
@@ -159,8 +154,7 @@ lambda-sqs-teardown: _lambda-sqs-teardown clean ## deprovision full s3-sqs stack
 .PHONY: _lambda-sqs-teardown
 _lambda-sqs-teardown:
 	$(NO_ECHO)alr-helper remove-bucket-notification $(BUCKET_NAME) || true; \
-	uuid=$$(alr-helper list-eventsource-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) 2>/dev/null | \
-	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{EventSourceMappings}[0]{UUID}//q{}'); \
+	uuid="$$(alr-helper list-eventsource-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | dnk 'EventSourceMappings[0].UUID')"; \
 	if [[ -n "$$uuid" ]]; then \
 	  alr-helper delete-eventsource-mappings $$uuid || true; \
 	fi; \

@@ -11,17 +11,17 @@ trigger_types:
   - alb
 
 mapping:
+  - yaml: lambda.name
+    env: FUNCTION_NAME
+    default: lambda-handler
+
   - yaml: image.repo
     env: REPO_NAME
-    default: perl-lambda
+    default: @FUNCTION_NAME@
 
   - yaml: image.handler
     env: HANDLER_CLASS
     required: true
-
-  - yaml: lambda.name
-    env: FUNCTION_NAME
-    default: lambda-handler
 
   - yaml: lambda.timeout
     env: TIMEOUT
@@ -37,7 +37,7 @@ mapping:
 
   - yaml: role.name
     env: ROLE_NAME
-    default: lambda-role
+    default: @FUNCTION_NAME@-role
 
   - yaml: role.profile
     env: ROLE_PROFILE
@@ -132,7 +132,7 @@ mapping:
 
   - yaml: trigger.rule_name
     env: RULE_NAME
-    default: lambda-handler-rule
+    default: @FUNCTION_NAME@-rule
     applies_to:
       - eventbridge
 

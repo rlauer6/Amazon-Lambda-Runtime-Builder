@@ -1,0 +1,9 @@
+image:
+  handler: '@app_name@::Lambda::Handler'
+lambda:
+  name: lambda-handler
+trigger:
+  type: s3-direct
+  bucket: my-input-bucket
+  prefix: incoming/
+  event: 's3:ObjectCreated:*'

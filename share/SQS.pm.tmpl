@@ -1,0 +1,26 @@
+########################################################################
+package @app_name@::Lambda::Event::SQS;
+########################################################################
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+
+use parent qw(Amazon::Lambda::Runtime::Event::SQS);
+
+########################################################################
+sub on_message {
+########################################################################
+  my ( $self, $body, $sqs_record ) = @_;
+
+  my $logger = $self->get_logger;
+
+  $logger->info('handling SQS event');
+
+  $logger->info( Dumper( [ body => $body, sqs_record => $sqs_record ] ) );
+
+  return;
+}
+
+1;

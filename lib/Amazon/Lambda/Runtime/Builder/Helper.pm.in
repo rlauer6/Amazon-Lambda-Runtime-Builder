@@ -323,12 +323,12 @@ sub main {
 ########################################################################
   my %commands = (
     'add-permission'                   => \&cmd_lambda_add_permission,
-    'attach-policies-from-profile'     => \&cmd_attach_policies_from_profile,
+    'attach-policies-from-profile'     => \&cmd_iam_attach_policies_from_profile,
     'attach-policy'                    => \&cmd_iam_attach_role_policy,
     'check'                            => \&cmd_check,
     'create-alb-target-group'          => \&cmd_elbv2_create_alb_target_group,
     'create-alb-listener-rule'         => \&cmd_elbv2_create_alb_listener_rule,
-    'create-assume-policy'             => \&cmd_create_assume_policy,
+    'create-assume-policy'             => \&cmd_iam_create_assume_policy,
     'create-bucket'                    => \&cmd_s3_create_bucket,
     'create-cpanfile'                  => \&cmd_create_cpanfile,
     'create-eventsource-mappings'      => \&cmd_lambda_create_eventsource_mappings,
@@ -390,6 +390,7 @@ sub main {
     'list-eventsource-mappings'        => \&cmd_lambda_list_eventsource_mappings,
     'list-queues'                      => \&cmd_sqs_list_queues,
     'list-subscriptions'               => \&cmd_sns_list_subscriptions_by_topic,
+    'list-targets-by-rule'             => \&cmd_eventbridge_list_targets_by_rule,
     'list-topics'                      => \&cmd_sns_list_topics,
     'modify-alb-listener-rule'         => \&cmd_elbv2_create_alb_listener_rule,
     'publish'                          => \&cmd_sns_publish,

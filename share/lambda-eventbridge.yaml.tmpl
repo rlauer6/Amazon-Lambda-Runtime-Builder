@@ -1,0 +1,7 @@
+image:
+  handler: '@app_name@::Lambda::Handler'
+lambda:
+  name: lambda-handler
+trigger:
+  type: eventbridge
+  schedule: rate(1 day)

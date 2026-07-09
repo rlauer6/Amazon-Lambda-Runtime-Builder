@@ -30,6 +30,18 @@ use Role::Tiny;
 }
 
 ########################################################################
+sub cmd_eventbridge_list_targets_by_rule {
+########################################################################
+  my ($self) = @_;
+
+  my ($rule) = $self->get_args;
+
+  my $rsp = eval { $self->_events->ListTargetsByRule( { Rule => $rule } ); };
+
+  return $self->_handle_response($rsp);
+}
+
+########################################################################
 sub cmd_eventbridge_describe_rule {
 ########################################################################
   my ($self) = @_;
@@ -50,11 +62,8 @@ sub cmd_eventbridge_put_rule_expression {
 
   my ( $rule_name, $expression, $state ) = $self->get_args;
 
-  my $rsp = $self->_eventbridge_put_rule(
-    expression => $expression,
-    state      => $state,
-    rule_name  => $rule_name
-  );
+  my $rsp
+    = eval { return $self->_eventbridge_put_rule( expression => $expression, state => $state, rule_name => $rule_name ); };
 
   return $self->_check_response($rsp);
 }
@@ -92,11 +101,7 @@ sub cmd_eventbridge_put_rule_pattern {
 
   my ( $rule_name, $pattern, $state ) = $self->get_args;
 
-  my $rsp = $self->_eventbridge_put_rule(
-    pattern   => $pattern,
-    state     => $state,
-    rule_name => $rule_name
-  );
+  my $rsp = eval { $self->_eventbridge_put_rule( pattern => $pattern, state => $state, rule_name => $rule_name ); };
 
   return $self->_check_response($rsp);
 }
@@ -127,7 +132,7 @@ sub _eventbridge_put_rule {
     }
   );
 
-  return $self->_check_response($rsp);
+  return $rsp;
 }
 
 ########################################################################
@@ -139,7 +144,7 @@ sub cmd_eventbridge_disable_rule {
 
   my $events = $self->_events;
 
-  my $rsp = $events->DisableRule( { Name => $rule_name } );
+  my $rsp = eval { return $events->DisableRule( { Name => $rule_name } ); };
 
   if ( !$rsp && $EVAL_ERROR ) {
     print {*STDERR} $EVAL_ERROR;
@@ -177,7 +182,7 @@ sub cmd_eventbridge_remove_targets {
 
   my $events = $self->_events;
 
-  my $rsp = eval { $events->RemoveTargets( { Name => $rule_name, Ids => [@ids] } ); };
+  my $rsp = eval { $events->RemoveTargets( { Rule => $rule_name, Ids => [@ids] } ); };
 
   return $self->_check_response($rsp);
 }

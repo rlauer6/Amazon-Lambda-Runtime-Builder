@@ -6,8 +6,7 @@ $(CACHE_DIR)/lambda-function-url:  $(CACHE_DIR)/lambda-function-url-permission \
     $(CACHE_DIR)/lambda-function-url-invoke-permission | $(CACHE_DIR) ## create Lambda function URL for streaming \
 	$(NO_ECHO)url="$$(alr-helper get-function-url-config $(FUNCTION_NAME) 2>&1 || true)"; \
 	if echo "$$url" | grep -q 'ResourceNotFoundException'; then \
-	    url="$$(alr-helper create-function-url-config $(FUNCTION_NAME) $(INVOKE_MODE) | \
-	      perl -MJSON -0ne 'print decode_json($$_)->{FunctionUrl}')"; \
+	    url="$$(alr-helper create-function-url-config $(FUNCTION_NAME) $(INVOKE_MODE) | dnk FunctionURL)"; \
 	elif echo "$$url" | grep -q 'error\|Error'; then \
 	    echo "ERROR: get-function-url-config failed: $$url" >&2; \
 	    exit 1; \

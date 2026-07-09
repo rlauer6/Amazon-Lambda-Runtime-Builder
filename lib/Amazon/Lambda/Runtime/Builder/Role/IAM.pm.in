@@ -330,7 +330,6 @@ sub _wait_create_role {
 
     while ( $TRUE && $self->get_wait ) {
       my $rsp = eval { $self->_iam_get_role($role_name); };
-      $self->get_logger->info( Dumper( [ rsp => $rsp ] ) );
 
       last if $rsp;
 

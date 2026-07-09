@@ -1,12 +1,14 @@
 package Amazon::Lambda::Runtime::Builder::Role::Install;
 
 use CLI::Simple::Constants qw(:booleans);
-use CLI::Simple::Utils qw(slurp);
+use CLI::Simple::Utils qw(slurp toPascalCase choose);
 
 use Cwd qw(cwd);
+use Data::Dumper;
 use English qw(-no_match_vars);
 use File::Basename qw(dirname basename);
-use File::Copy qw(copy);
+use File::Copy;
+use File::Find;
 use File::Path qw(make_path);
 use Role::Tiny;
 
@@ -14,6 +16,31 @@ use Role::Tiny;
 sub cmd_install {
 ########################################################################
   my ($self) = @_;
+
+  my ( $app_name, $trigger_type ) = $self->get_args;
+
+  die "ERROR: usage: alr-builder install app-name\n"
+    if !$app_name;
+
+  my @app_parts = split /::/xsm, $app_name;
+
+  for my $part ( map { ( toPascalCase($_) ) } @app_parts ) {
+    die "ERROR: invalid app name segment '$part' (must be a valid Perl identifier)\n"
+      if $part !~ /\A[A-Za-z][A-Za-z0-9]*\z/xsm;
+  }
+
+  $app_name = join q{::}, map { ( toPascalCase($_) ) } @app_parts;
+
+  my $app_path = 'lib/' . join q{/}, map { ( toPascalCase($_) ) } @app_parts;
+
+  $self->get_logger->debug(
+    Dumper(
+      [ app_parts => \@app_parts,
+        app_name  => $app_name,
+        app_path  => $app_path
+      ]
+    )
+  );
 
   my $install_dir = $self->get_install_dir // cwd;
   my $manifest    = $self->get_manifest();
@@ -23,8 +50,10 @@ sub cmd_install {
     make_path($install_dir);
   }
 
-  foreach my $file ( keys %{$manifest} ) {
-    my $entry = $manifest->{$file};
+  my $manifest_files = $manifest->{files};
+
+  foreach my $file ( keys %{$manifest_files} ) {
+    my $entry = $manifest_files->{$file};
     my ( $dest, $overwrite ) = ref $entry ? ( $entry->{dest}, $entry->{overwrite} ) : ( $entry, undef );
 
     my $src = sprintf '%s/%s', $dist_dir, basename($file);
@@ -83,7 +112,93 @@ sub cmd_install {
     }
   }
 
+  my @templates = @{ $manifest->{templates} };
+
+  if ( !$trigger_type ) {
+    $trigger_type //= 'eventbridge';
+    $self->get_logger->info( sprintf 'no trigger type specified...using default: %s', $trigger_type );
+  }
+
+  foreach my $tmpl (@templates) {
+    my $content = slurp( sprintf '%s/%s', $dist_dir, basename($tmpl) );
+    $content =~ s/[@]app_name[@]/$app_name/xsmg;
+
+    if ( $tmpl =~ /Handler/xsm ) {
+      foreach my $type (qw(alb eventbridge sns s3-direct s3-sqs)) {
+        my $mark = $trigger_type eq $type ? q{ } : q{# };
+        $content =~ s/[@]$type[@]/$mark/xsmg;
+      }
+    }
+
+    my $dest_path = choose {
+
+      if ( $tmpl =~ /[.]pm/xsm ) {
+        my $dest = sprintf '%s/%s/%s', $install_dir, $app_path, dirname($tmpl);
+        make_path($dest);
+
+        return sprintf '%s/%s', $dest, basename( $tmpl, '.tmpl' );
+      }
+
+      return sprintf '%s/%s', $install_dir, basename( $tmpl, '.tmpl' );
+    };
+
+    $self->get_logger->info( sprintf 'writing %s...', $dest_path );
+
+    open my $fh, '>', $dest_path
+      or die "ERROR: could not open $dest_path for writing\n$OS_ERROR";
+
+    print {$fh} $content;
+
+    close $fh;
+  }
+
+  {
+
+    my $src = sprintf '%s/lambda-%s.yaml', $install_dir, $trigger_type // 'eventbridge';
+
+    die "ERROR: invalid trigger type: only types `alb`, `eventbridge`, `s3-direct`, `s3-sqs`, `sns` are supported\n"
+      if !-e $src;
+
+    $self->get_logger->info( sprintf 'trigger type: %s. Installing to %s', $trigger_type, 'lambda.yaml' );
+
+    my $dest = sprintf '%s/lambda.yaml', $install_dir;
+
+    copy( $src, $dest );
+  }
+
+  $self->get_logger->info('Installation complete...installed assets:');
+
+  $self->tree($install_dir);
+
   return $SUCCESS;
+}
+
+########################################################################
+sub tree {
+########################################################################
+  my ( $self, $root_dir ) = @_;
+
+  my $logger = $self->get_logger;
+  $logger->info($root_dir);
+
+  find(
+    { wanted => sub {
+        # Skip the root directory reference itself
+        return if $_ eq q{.};
+
+        # Calculate depth based on the number of slashes in the path
+        my $depth = ( $File::Find::dir =~ tr[/][/] );
+
+        # Format the visual branch
+        my $indent = '    ' x $depth;
+        $logger->info( sprintf '%s|-- %s', $indent, basename($_) );
+      },
+      no_chdir => $FALSE,
+    },
+    $root_dir
+  );
+
+  return;
 }
 
 1;

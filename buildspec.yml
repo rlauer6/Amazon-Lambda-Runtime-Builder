@@ -20,7 +20,12 @@ extra-files:
       - profiles.yml
       - share/Dockerfile
       - share/MANIFEST.json
-      - share/LambdaHandler.pm
+      - share/Handler.pm.tmpl
+      - share/SQS.pm.tmpl
+      - share/SNS.pm.tmpl
+      - share/S3.pm.tmpl
+      - share/ALB.pm.tmpl
+      - share/EventBridge.pm.tmpl
       - share/Makefile.mk
       - share/Makefile.builder
       - share/alb.mk
@@ -45,6 +50,11 @@ extra-files:
       - share/sns.mk
       - share/sqs.mk
       - share/streaming.mk
+      - share/lambda-alb.yaml.tmpl
+      - share/lambda-eventbridge.yaml.tmpl
+      - share/lambda-s3-direct.yaml.tmpl
+      - share/lambda-sns.yaml.tmpl
+      - share/lambda-s3-sqs.yaml.tmpl
 resources:
   bugtracker:
     mailto: rclauer@gmail.com

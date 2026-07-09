@@ -1,10 +1,85 @@
+Wed Jul  8 14:04:32 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.4.0]:
+	* VERSION: bump
+	* release-notes.md: updated
+	* release-notes/release-notes-1.4.0.md: new
+	* requires: Data::NestedKey 1.2.1
+	* lib/Amazon/Lambda/Runtime/Builder.pm.in
+	(init): store entire manifest object, not just files
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Install.pm.in
+	(cmd_install)
+	- accept app-name, trigger-type as arguments to install command
+	- normalize app-name and create name and path
+	- use files from manifest object
+	- resolve templates
+	- install lambd-*.yaml trigger type files
+	- cp target trigger .yaml file to lambda.yaml
+	- comment out event handlers not being used
+	- display source tree
+	(tree): new
+	* lib/Amazon/Lambda/Runtime/Builder/Role/IAM.pm.in
+	(_wait_create_role): remove debugging statement
+	*lib/Amazon/Lambda/Runtime/Builder/Helper.pm.in:
+	(main)
+	- fix names of iam subs
+	- add new list-targets-by-rule command
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Config.pm.in
+	(_mapping_subst): new
+	(_load_mapping)
+	- accept subst arg for template substitution
+	- resolve template tokens
+	(_generate_lambda_env)
+	- use defaults to populate values not supplied
+	(_walk_mapping)
+	- pass FUNCTION_NAME to _load_mapping to seed defaults
+	(_validate_constraints)
+	- add stubs for all trigger types
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Events.pm.in
+	(cmd_eventbridge_list_targets_by_type): new
+	(cmd_eventbridge_put_rule_expression): eval API call
+	(cmd_eventbridge_put_rulle_pattern): likewise
+	(cmd_eventbridge_disable_rule): likewise
+	(cmd_eventbridge_remove_targets): Rule, not Name
+	(_eventbridge_put_rule)
+	- don't go through _check_response, produced 2 output values
+	* share/Makefile.mk
+	- include and optional config.mk
+	- set default REPO_NAME, ROLE_NAME from FUNCTION_NAME
+	- get default DIST_NAME from MODULE_NAME, not project directory name
+	- better error message when tarball missing
+	* share/eventbridge.mk
+	- get default RULE_NAME from FUNCTION_NAME
+	- replace JSON with dnk
+	* share/lambda-mapping.yml
+	- move FUNCTION_NAME up so it is resolved first? unneeded now
+	- use template tokens for default REPO_NAME, ROLE_NAME, RULE_NAME
+	* share/ALB.pm.tmpl: new
+	* share/EventBridge.pm.tmpl: new
+	* share/Handler.pm.tmpl: new
+	* share/S3.pm.tmpl: new
+	* share/SNS.pm.tmpl: new
+	* share/SQS.pm.tmpl: new
+	* share/lambda-alb.yaml.tmpl: new
+	* share/lambda-eventbridge.yaml.tmpl: new
+	* share/lambda-s3-direct.yaml.tmpl: new
+	* share/lambda-s3-sqs.yaml.tmpl: new
+	* share/lambda-sns.yaml.tmpl: new
+	* buildspec.yml:add above to build
+	* share/MANIFEST.json: likewise
+	* share/alb.mk: replace JSON with dnk
+	* share/sns.mk: likewise
+	* share/sqs.mk: likewise
+	* share/streaming.mk: likewise
+	* share/sns.mk: likewise
+
 Tue Jul  7 14:35:27 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.3.3]:
 	* GETTING-STARTED.md: remove draft notice
 	* VERSION: bump
 	* release-notes.md: updated
-	* release-notes/release-notes-1.3.2.md: new
+	* release-notes/release-notes-1.3.3.md: new
 	* lib/Amazon/Lambda/Runtime/Builder.pm.in
 	- pod updates
 	* lib/Amazon/Lambda/Runtime/Builder/Helper.pm.in

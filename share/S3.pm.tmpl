@@ -1,0 +1,80 @@
+########################################################################
+package @app_name@::Lambda::Event::S3;
+########################################################################
+
+use strict;
+use warnings;
+
+use Amazon::S3;
+use Amazon::Credentials;
+use Data::Dumper;
+use English qw(-no_match_vars);
+use List::Util qw(min);
+
+use parent qw(Amazon::Lambda::Runtime::Event::S3);
+
+my $s3;
+
+########################################################################
+sub get_s3 {
+########################################################################
+  return $s3 //= do {
+    my $creds = Amazon::Credentials->new;
+    Amazon::S3::Lite->new(
+      credentials => $creds,
+      region      => $ENV{AWS_REGION},
+    );
+  };
+}
+
+########################################################################
+sub on_s3_event {
+########################################################################
+  my ( $self, $s3_record ) = @_;
+
+  my $logger = $self->get_logger;
+
+  $logger->info('handling S3 event');
+
+  my $s3_meta = $s3_record->{s3};
+
+  my $bucket_name = $s3_meta->{bucket}{name};
+  my ( $key, $size ) = @{ $s3_meta->{object} }{qw(key size)};
+
+  $logger->info(
+    Dumper(
+      [ event_name => $s3_record->{eventName},
+        bucket     => $bucket_name,
+        key        => $key,
+        size       => $size,
+      ]
+    )
+  );
+
+  my $bucket = get_s3()->bucket($bucket_name);
+
+  my $response = eval { $bucket->get_key($key); };
+
+  if ($EVAL_ERROR) {
+    $logger->error( sprintf 'failed to read s3://%s/%s: %s', $bucket_name, $key, $EVAL_ERROR );
+    return;
+  }
+
+  $logger->info( Dumper( [ response => $response ] ) );
+
+  my $obj = $response->{value};
+
+  my $obj_len = length $obj;
+
+  $logger->info( sprintf 'read %d bytes from s3://%s/%s', $obj_len, $bucket_name, $key, );
+
+  my $sample_len = min( 256, $obj_len );
+
+  $logger->info( sprintf 'first %s bytes of %s', $sample_len, $obj_len );
+
+  $logger->info( substr $obj, 0, $sample_len );
+
+  return;
+}
+
+1;

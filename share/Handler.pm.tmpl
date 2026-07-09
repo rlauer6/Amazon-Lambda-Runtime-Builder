@@ -1,0 +1,57 @@
+package @app_name@::Lambda::Handler;
+
+use strict;
+use warnings;
+
+our $VERSION = '1.0.0';
+
+use parent qw(Amazon::Lambda::Runtime);
+
+use Amazon::Lambda::Runtime::Event qw(:all);
+
+# uncomment to register an additional event handler
+@alb@__PACKAGE__->register_event_handler( $EVENT_ALB         => '@app_name@::Lambda::Event::ALB' );
+@s3-sqs@__PACKAGE__->register_event_handler( $EVENT_SQS         => '@app_name@::Lambda::Event::SQS' );
+@sns@__PACKAGE__->register_event_handler( $EVENT_SNS         => '@app_name@::Lambda::Event::SNS' );
+@s3-direct@__PACKAGE__->register_event_handler( $EVENT_S3          => '@app_name@::Lambda::Event::S3' );
+@eventbridge@__PACKAGE__->register_event_handler( $EVENT_EVENTBRIDGE => '@app_name@::Lambda::Event::EventBridge' );
+
+########################################################################
+sub handler {
+########################################################################
+  my ( $self, $event, $context ) = @_;
+
+  # streaming test — only fires for Function URL invocations
+  # which have no Records and no detail-type
+  if ( !$event->{Records} && !$event->{'detail-type'} ) {
+    return sub {
+      my ($writer) = @_;
+      $writer->write('{"chunk":1,"message":"Hello from streaming Perl Lambda!"}');
+      $writer->write('{"chunk":2,"message":"Still streaming..."}');
+      $writer->close;
+    };
+  }
+
+  # delegate everything else to the base class registry dispatch
+  return $self->SUPER::handler( $event, $context );
+}
+
+1;
+
+__END__
+
+=pod
+
+=head1 NAME
+
+@app_name@::Lambda::Handler - Lambda event handler for @app_name@
+
+=head1 SYNOPSIS
+
+=head1 DESCRIPTION
+
+=head1 AUTHOR
+
+<Insert your name here>
+
+=cut

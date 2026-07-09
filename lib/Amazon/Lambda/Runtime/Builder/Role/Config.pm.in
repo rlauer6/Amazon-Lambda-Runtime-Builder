@@ -49,16 +49,60 @@ sub _yaml_get {
 }
 
 ########################################################################
+sub _mapping_subst {
+########################################################################
+  my ( $self, $config ) = @_;
+
+  # Values that may be referenced as @FIELD@ in mapping defaults. Read
+  # from the user's parsed config, falling back to the same base default
+  # the mapping would otherwise use, so e.g. REPO_NAME still derives
+  # sensibly when the user didn't set lambda.name. Loaded WITHOUT
+  # substitution here to read the base default (no recursion).
+  my $base = $self->_load_mapping;
+
+  my %default = map { $_->{env} => $_->{default} }
+    grep { defined $_->{env} && exists $_->{default} } @{ $base->{mapping} };
+
+  my $function_name = _yaml_get( $config, 'lambda.name' ) // $default{FUNCTION_NAME};
+
+  return { FUNCTION_NAME => $function_name };
+}
+
+########################################################################
 sub _load_mapping {
 ########################################################################
-  my ($self) = @_;
+  my ( $self, $subst ) = @_;
 
   require YAML::Tiny;
 
   my $dist_dir     = $self->get_dist_dir;
   my $mapping_file = "$dist_dir/lambda-mapping.yml";
 
-  return YAML::Tiny->read($mapping_file)->[0];
+  # Slurp the raw mapping text and interpolate @FIELD@ tokens (e.g.
+  # REPO_NAME default '@FUNCTION_NAME@') BEFORE parsing. Substituting on
+  # the text means:
+  #   - the parsed defaults are already concrete (no post-parse walk),
+  #   - YAML never sees a bare '@' (which it rejects as a plain-scalar
+  #     indicator), so the mapping defaults don't need quoting.
+  # $subst holds values resolved from the user's lambda.yaml/lambda.env,
+  # read independently and passed in by the caller.
+  $subst //= {};
+
+  open my $fh, '<', $mapping_file
+    or die "ERROR: could not open $mapping_file\n$OS_ERROR";
+
+  my $text = do { local $RS = undef; <$fh> };
+
+  close $fh;
+
+  # A token with no supplied value is left as-is; if it survives into a
+  # value that becomes an AWS resource name it will be visibly wrong
+  # (a literal @FIELD@) rather than silently substituted with nothing.
+  #  $text =~ s/[@](\w+)[@]/ exists $subst->{$1} ? $subst->{$1} : "\@$1\@" /xsmge;
+
+  $text =~ s{[@](\w+)[@]}{ defined $subst->{$1} ? $subst->{$1} : q{} }xsmge;
+
+  return YAML::Tiny->read_string($text)->[0];
 }
 
 ########################################################################
@@ -103,8 +147,9 @@ sub _generate_lambda_env {
   my $yaml_file = $self->_yaml_file;
   my $env_file  = $self->_env_file;
 
-  my $mapping_doc     = $self->_load_mapping;
-  my $mapping_version = $mapping_doc->{version};
+  # The mapping version gates regeneration; load once (no substitution
+  # needed) just to read the version and decide whether to proceed.
+  my $mapping_version = $self->_load_mapping->{version};
 
   return
     if !$self->_lambda_env_needs_regen($mapping_version);
@@ -117,6 +162,12 @@ sub _generate_lambda_env {
   }
 
   my $config = $yaml->[0];
+
+  # Re-load the mapping with @FIELD@ tokens interpolated from values the
+  # user supplied in lambda.yaml (e.g. FUNCTION_NAME <- lambda.name), so
+  # the mapping's derived defaults (REPO_NAME/ROLE_NAME/RULE_NAME) are
+  # already concrete when we walk them.
+  my $mapping_doc = $self->_load_mapping( $self->_mapping_subst($config) );
 
   my $trigger_type = _yaml_get( $config, 'trigger.type' );
 
@@ -136,12 +187,20 @@ sub _generate_lambda_env {
     my $var   = $entry->{env};
     my $value = _yaml_get( $config, $path );
 
+    # Not supplied in lambda.yaml: fall back to the (already-interpolated)
+    # mapping default instead of dropping the field, so lambda.env is
+    # self-complete and REPO_NAME/ROLE_NAME/RULE_NAME carry the values
+    # derived from FUNCTION_NAME rather than relying on Makefile fallbacks.
     if ( !defined $value ) {
       if ( $entry->{required} ) {
         $self->get_logger->warn("$path is required in $yaml_file (maps to $var) - not regenerating $env_file");
         return;
       }
-      next;
+
+      next
+        if !exists $entry->{default};
+
+      $value = $entry->{default};
     }
 
     next if $entry->{omit_if_false} && !$value;
@@ -197,18 +256,15 @@ sub _yaml_set {
   return;
 }
 
-########################################################################
 sub _walk_mapping {
 ########################################################################
   my ( $self, $provided ) = @_;
 
-  my $mapping_doc = $self->_load_mapping;
+  # Load the mapping with @FIELD@ tokens interpolated from the values
+  # already present in lambda.env (e.g. FUNCTION_NAME), so the reported
+  # defaults match what the writer would produce.
+  my $mapping_doc = $self->_load_mapping( { FUNCTION_NAME => $provided->{FUNCTION_NAME} } );
 
-  # Use whatever trigger type is actually configured (TRIGGER_TYPE, mapped
-  # from trigger.type in lambda.yaml/lambda.env). Only fall back to the
-  # first entry in trigger_types when nothing has been configured yet
-  # (e.g. a brand new project with no lambda.env/lambda.yaml at all) so
-  # check-env-file still has something sensible to report against.
   my $trigger_type = $provided->{TRIGGER_TYPE} // $mapping_doc->{trigger_types}[0];
 
   my ( @missing, @defaulted, @customized );
@@ -218,15 +274,16 @@ sub _walk_mapping {
       next if !grep { $_ eq $trigger_type } @{ $entry->{applies_to} };
     }
 
-    my $var   = $entry->{env};
-    my $value = $provided->{$var};
+    my $var     = $entry->{env};
+    my $value   = $provided->{$var};
+    my $default = $entry->{default};  # already interpolated at load time
 
     if ( !defined $value ) {
       if ( $entry->{required} ) {
         push @missing, $entry;
       }
-      elsif ( exists $entry->{default} ) {
-        push @defaulted, [ $entry, $entry->{default} ];
+      elsif ( defined $default ) {
+        push @defaulted, [ $entry, $default ];
       }
 
       next;
@@ -237,7 +294,7 @@ sub _walk_mapping {
       next;
     }
 
-    if ( exists $entry->{default} && "$value" eq "$entry->{default}" ) {
+    if ( defined $default && "$value" eq "$default" ) {
       push @defaulted, [ $entry, $value ];
     }
     else {
@@ -287,6 +344,9 @@ sub _validate_constraints {
 
       return;
     },
+    'eventbridge' => sub {return},  # no constraints (or add SCHEDULE check)
+    'sns'         => sub {return},  # no constraints (or add TOPIC_NAME check)
+    's3-direct'   => sub {return},  # no constraints (or add BUCKET check)
   );
 
   $check{$trigger_type}->($provided);

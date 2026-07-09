@@ -1,0 +1,33 @@
+########################################################################
+package @app_name@::Lambda::Event::EventBridge;
+########################################################################
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+
+use parent qw(Amazon::Lambda::Runtime::Event::EventBridge);
+
+########################################################################
+sub on_event {
+########################################################################
+  my ( $self, $detail_type, $detail, $event ) = @_;
+
+  my $logger = $self->get_logger;
+
+  $logger->info('handling EventBridge event');
+
+  $logger->info(
+    Dumper(
+      [ detail_type => $detail_type,
+        source      => $event->{source},
+        detail      => $detail,
+      ]
+    )
+  );
+
+  return;
+}
+
+1;

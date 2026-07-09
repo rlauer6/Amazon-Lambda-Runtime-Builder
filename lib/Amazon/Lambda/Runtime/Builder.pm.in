@@ -33,7 +33,6 @@ sub init {
   my $dist_dir = dist_dir('Amazon-Lambda-Runtime-Builder');
 
   my $manifest = slurp_json( sprintf '%s/MANIFEST.json', $dist_dir );
-  $manifest = $manifest->{files};
 
   $self->set_manifest($manifest);
   $self->set_dist_dir($dist_dir);

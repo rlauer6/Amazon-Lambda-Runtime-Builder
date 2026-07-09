@@ -3,6 +3,7 @@ SHELL := /bin/bash
 
 .SHELLFLAGS := -ec
 
+-include config.mk
 
 LAMBDA_ENV ?= lambda.env
 LAMBDA_YAML ?= lambda.yaml
@@ -23,10 +24,9 @@ FRAMEWORK_DIR ?= $(shell perl -MFile::ShareDir=dist_dir -e 'print dist_dir("Amaz
 
 include $(FRAMEWORK_DIR)/help.mk
 
-REPO_NAME      := $(strip $(REPO_NAME))
-FUNCTION_NAME  := $(strip $(FUNCTION_NAME))
-ROLE_NAME      := $(strip $(ROLE_NAME))
-TRIGGER_TYPE   := $(strip $(TRIGGER_TYPE))
+REPO_NAME     ?= $(FUNCTION_NAME)
+ROLE_NAME     ?= $(FUNCTION_NAME)-role
+TRIGGER_TYPE  := $(strip $(TRIGGER_TYPE))
 AWS_PROFILE   ?= default
 REGION        ?= us-east-1
 AWS_ACCOUNT   ?= $(shell alr-helper get-account)
@@ -35,7 +35,7 @@ TIMEOUT       ?= 30
 BUILDER_HOME  ?= $(CURDIR)
 CACHE_DIR     := $(BUILDER_HOME)/.cache/$(FUNCTION_NAME)
 NO_ECHO       ?= @
-DIST_NAME     ?= $(notdir $(CURDIR))
+DIST_NAME     ?= $(subst ::,-,$(MODULE_NAME))
 DIST_TARBALL  ?= $(shell ls $(BUILDER_HOME)/$(DIST_NAME)-*.tar.gz 2>/dev/null | sort -V | tail -1)
 
 PAYLOAD ?= $(firstword $(wildcard payload-$(TRIGGER_TYPE).json) \
@@ -64,7 +64,7 @@ endif
 
 ifneq ($(NEEDS_TARBALL),)
 ifeq ($(DIST_TARBALL),)
-  $(error No tarball found in $(BUILDER_HOME) - run 'make dist' first)
+  $(error No tarball $(DIST_TARBALL) found in $(BUILDER_HOME) - run 'make dist' first)
 endif
 endif
 

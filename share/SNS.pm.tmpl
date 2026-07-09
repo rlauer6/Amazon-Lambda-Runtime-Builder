@@ -1,0 +1,33 @@
+########################################################################
+package @app_name@::Lambda::Event::SNS;
+########################################################################
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+
+use parent qw(Amazon::Lambda::Runtime::Event::SNS);
+
+########################################################################
+sub on_notification {
+########################################################################
+  my ( $self, $message, $sns, $sns_record ) = @_;
+
+  my $logger = $self->get_logger;
+
+  $logger->info('handling SNS event');
+
+  $logger->info(
+    Dumper(
+      [ message => $message,
+        topic   => $sns->{TopicArn},
+        subject => $sns->{Subject},
+      ]
+    )
+  );
+
+  return;
+}
+
+1;

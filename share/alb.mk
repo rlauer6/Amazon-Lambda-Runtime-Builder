@@ -64,8 +64,7 @@ $(CACHE_DIR)/alb-target-group-registration: \
     $(CACHE_DIR)/alb-target-group \
     $(CACHE_DIR)/lambda-function | $(CACHE_DIR)
 	$(NO_ECHO)chmod -f 644 $@ || true; \
-	tg_arn="$$(cat $(CACHE_DIR)/alb-target-group | \
-	  perl -MJSON -0ne 'print decode_json($$_)->{TargetGroupArn}//q{}')" ; \
+	tg_arn="$$(cat $(CACHE_DIR)/alb-target-group | dnk TargetGroupArn)"; \
 	alr-helper register-alb-target \
 	    $$tg_arn \
 	    $(FUNCTION_NAME) || exit 1; \
@@ -79,13 +78,11 @@ lambda-alb-pipeline: \
 
 .PHONY: _lambda-alb-teardown
 _lambda-alb-teardown:
-	$(NO_ECHO)rule_arn="$$(cat $(CACHE_DIR)/alb-listener-rule 2>/dev/null | \
-	  perl -MJSON -0ne 'print decode_json($$_)->{RuleArn}//q{}')" ; \
+	$(NO_ECHO)rule_arn="$$(cat $(CACHE_DIR)/alb-listener-rule 2>/dev/null | dnk RuleArn)"; \
 	if [[ -n "$$rule_arn" ]]; then \
 	    alr-helper delete-alb-listener-rule $$rule_arn || true; \
 	fi; \
-	tg_arn="$$(cat $(CACHE_DIR)/alb-target-group 2>/dev/null | \
-	  perl -MJSON -0ne 'print decode_json($$_)->{TargetGroupArn}//q{}')" ; \
+	tg_arn="$$(cat $(CACHE_DIR)/alb-target-group 2>/dev/null | dnk TargetGroupArn)";  \
 	if [[ -n "$$tg_arn" ]]; then \
 	    alr-helper deregister-alb-target $$tg_arn $(FUNCTION_NAME) || true; \
 	    alr-helper delete-alb-target-group $$tg_arn || true; \

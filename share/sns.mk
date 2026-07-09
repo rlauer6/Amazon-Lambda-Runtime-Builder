@@ -15,8 +15,7 @@
 TOPIC_NAME ?= lambda-runtime
 
 $(CACHE_DIR)/sns-topic: | $(CACHE_DIR) ## create SNS topic (CreateTopic is naturally idempotent)
-	$(NO_ECHO)topic_arn="$$(alr-helper create-topic $(TOPIC_NAME) | \
-	  perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{TopicArn}//q{}')"; \
+	$(NO_ECHO)topic_arn="$$(alr-helper create-topic $(TOPIC_NAME) | dnk TopicArn)"; \
 	test -z "$$topic_arn" && { rm -f $@ && exit 1; }; \
 	echo "$$topic_arn" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
@@ -81,8 +80,7 @@ lambda-sns-teardown: _lambda-sns-teardown clean ## deprovision full SNS stack
 _lambda-sns-teardown:
 	$(NO_ECHO)topic_arn="$$(cat $(CACHE_DIR)/sns-topic 2>/dev/null || true)"; \
 	if [[ -n "$$topic_arn" ]]; then \
-	  sub_arn="$$(cat $(CACHE_DIR)/lambda-sns-trigger 2>/dev/null | \
-	    perl -MJSON -0ne '$$r=eval{decode_json($$_)}; print ref $$r ? $$r->{SubscriptionArn}//q{} : q{}')"; \
+	  sub_arn="$$(cat $(CACHE_DIR)/lambda-sns-trigger 2>/dev/null | dnk SubscriptionArn)"; \
 	  if [[ -n "$$sub_arn" && "$$sub_arn" != "pending confirmation" ]]; then \
 	    alr-helper unsubscribe $$sub_arn || true; \
 	  fi; \

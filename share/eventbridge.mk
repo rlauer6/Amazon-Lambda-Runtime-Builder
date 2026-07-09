@@ -8,13 +8,13 @@
 ########################################################################
 
 SCHEDULE_EXPRESSION ?= rate(1 day)
-RULE_NAME           ?= lambda-handler-rule
+RULE_NAME           ?= $(FUNCTON_NAME)-rule
 RULE_STATE          ?= ENABLED
 
 $(CACHE_DIR)/lambda-eventbridge-rule: | $(CACHE_DIR) ## create EventBridge schedule rule 
 	$(NO_ECHO)rule="$$(alr-helper describe-rule $(RULE_NAME) 2>&1 || true)"; \
 	if echo "$$rule" | grep -q 'ResourceNotFoundException'; then \
-	    rule="$$(alr-helper put-rule-expression $(RULE_NAME) '$(SCHEDULE_EXPRESSION)' $(RULE_STATE))"; \
+	  rule="$$(alr-helper put-rule-expression $(RULE_NAME) '$(SCHEDULE_EXPRESSION)' $(RULE_STATE))"; \
 	elif echo "$$rule" | grep -q 'error\|Error'; then \
 	    echo "ERROR: describe-rule failed: $$rule" >&2; \
 	    rm -f $@ && exit 1; \
@@ -27,8 +27,7 @@ $(CACHE_DIR)/lambda-eventbridge-permission: $(CACHE_DIR)/lambda-function \
     $(CACHE_DIR)/lambda-eventbridge-rule | $(CACHE_DIR) ## grant EventBridge permission to invoke Lambda
 	$(NO_ECHO)permission="$$(alr-helper get-lambda-policy $(FUNCTION_NAME) 2>/dev/null || true)"; \
 	if ! echo "$$permission" | grep -q events.amazonaws.com; then \
-	  SOURCE_ARN=$$(cat $(CACHE_DIR)/lambda-eventbridge-rule | \
-	    perl -MJSON -0ne '$$r=decode_json($$_); print $$r->{RuleArn}'); \
+	  SOURCE_ARN=$$(cat $(CACHE_DIR)/lambda-eventbridge-rule | dnk get RuleArn; \
 	  permission="$$(alr-helper add-permission \
 	    $(FUNCTION_NAME) \
 	    eventbridge-trigger-$(RULE_NAME) \

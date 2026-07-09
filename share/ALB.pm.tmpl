@@ -1,0 +1,134 @@
+package @app_name@::Lambda::Event::ALB;
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+use English qw(-no_match_vars);
+use HTTP::Status qw(:constants status_message);
+use JSON qw(encode_json decode_json);
+
+use parent qw(Amazon::Lambda::Runtime::Event::ALB);
+
+our $VERSION = '0.01';
+
+our %DISPATCH = ( '/health' => { GET => \&_api_health, }, );
+
+########################################################################
+sub on_request {
+########################################################################
+  my ( $self, $method, $path, $params, $event ) = @_;
+
+  if ( $method eq 'GET' ) {
+    require URI::Escape;
+
+    my $query_params = $event->{queryStringParameters} // {};
+
+    if ( my $mv = $event->{multiValueQueryStringParameters} ) {
+      # take the last value for each key; adjust if you want all of them
+      $query_params = { map { $_ => $mv->{$_}[-1] } keys %{$mv} };
+    }
+
+    foreach ( keys %{$query_params} ) {
+      my $v = $query_params->{$_} // q{};
+      $v =~ s/[+]/ /xsmg;
+      $params->{$_} = URI::Escape::uri_unescape($v);
+    }
+  }
+
+  $self->get_logger->info( sprintf '        METHOD =>%s',  $method );
+  $self->get_logger->info( sprintf '     PATH_INFO => %s', $path );
+  $self->get_logger->info( sprintf '        PARAMS => %s', join q{&}, map { $_ . q{=} . $params->{$_} } keys %{$params} );
+  $self->get_logger->info( sprintf '         PATH => %s',  $ENV{PATH}     // q{} );
+  $self->get_logger->info( sprintf '     PERL5LIB => %s',  $ENV{PERL5LIB} // q{} );
+
+  my $handler = $DISPATCH{$path};
+
+  return $self->bad_request( 'no handler for this path: [%s]', $path )
+    if !$handler;
+
+  my $method_handler = $handler->{$method}->{handler};
+
+  return $self->bad_request( 'no handler for this method: [%s]', $method )
+    if !$method_handler || reftype($method_handler) ne 'CODE';
+
+  $self->get_logger->info( sprintf 'Found handler for %s %s ...invoking handler', $method, $path );
+
+  return $method_handler->( $self, $params );
+}
+
+########################################################################
+sub _api_health_check {
+########################################################################
+  my ( $self, $params ) = @_;
+
+  return $self->respond(
+    HTTP_OK,
+    encode_json(
+      { status  => 'ok',
+        version => $VERSION,
+      }
+    )
+  );
+}
+
+########################################################################
+sub _http_error {
+########################################################################
+  my ( $self, $status, @args ) = @_;
+
+  my $message = shift @args;
+  $message //= status_message($status);
+
+  my $full_message = sprintf "%s: $message", $status, @args;
+  $self->get_logger->error($full_message);
+
+  return $self->respond( $status, $full_message );
+}
+
+########################################################################
+sub bad_request {
+########################################################################
+  my ( $self, @args ) = @_;
+
+  return $self->_http_error( HTTP_BAD_REQUEST, @args );
+}
+
+########################################################################
+sub internal_server_error {
+########################################################################
+  my ( $self, @args ) = @_;
+
+  return $self->respond( HTTP_INTERNAL_SERVER_ERROR, @args );
+}
+
+########################################################################
+sub not_found {
+########################################################################
+  my ( $self, @args ) = @_;
+
+  return $self->respond( HTTP_NOT_FOUND, @args );
+}
+
+########################################################################
+sub respond {
+########################################################################
+  my ( $self, $status, @args ) = @_;
+
+  my $body = shift @args;
+
+  my $response = encode_json(
+    $self->_alb_response(
+      $status,
+      { message => sprintf( $body, @args ),
+        status  => $status + 0,
+      }
+    )
+  );
+
+  $self->get_logger->debug( sprintf 'status: %s body: %s', $status, $body );
+
+  return $response;
+}
+
+1;
