@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use CLI::Simple::Constants qw(:booleans);
+use Data::Dumper;
 use English qw(-no_match_vars);
 use List::Util qw(pairs);
 
@@ -127,10 +128,12 @@ sub _lambda_env_needs_regen {
 
   close $fh;
 
-  if ( $first_line =~ /mapping \s v(\S+)/xsm ) {
-    return $TRUE if $1 ne $mapping_version;
+  if ( $first_line =~ /mapping \s v([0-9.]+)/xsm ) {
+    my $line_version = $1;
+    return $TRUE if $line_version ne $mapping_version;
   }
   else {
+    print {*STDERR} "no mapping version\n";
     return $TRUE;
   }
 

@@ -1,3 +1,50 @@
+Fri Jul 10 16:20:54 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.5.0]:
+	* release-notes.md: updated
+	* release-notes/release-notes-1.4.0.md: new
+	* VERSION: bump
+	* GETTING-STARTED.md: update walkthrough using new commands
+	* lib/Amazon/Lambda/Runtime/Builder.pm.in
+	- updated pod based on new commands, etc
+	(init)
+	- initialize color flag
+	(_load_lambda_env): new
+	(cmd_build_lambda): new
+	(cmd_teardown_lambda): new
+	(_run_pipeline): new
+	(cmd_report_step): new
+	(tail_file): new
+	(render_status): new
+	(_render_output): new
+	(_fmt_elapsed): new
+	(_prune_logs): new
+	(_glyph): new
+	(_elapsed_ms): new
+	(main)
+	- register new commands
+	- new option --color, --no-color
+	* lib/Amazon/Lambda/Runtime/Builder/Helper.pm.in
+	(_handle_return): new
+	(_handle_response): return through _handle_return to add telemetry
+	(cmd_report_step): new
+	(main)
+	- register new command
+	- new option --report-step
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Config.pm.in
+	(_lambda_env_needs_regen): fix regex
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Events.pm.in
+	- _check_response => _hand_response
+	(cmd_eventbridge_disable_rule): return through _handle_return()
+	(cmd_eventbridge_enable_rule): likewise
+	* share/ecr-login.mk: deleted, use alr-helper
+	* buildspec.yml: deleted above
+	* share/Makefile.mk
+	- add telemetry to alr-help calls (--report-step)
+	- NOCACHE => NO_CACHE
+	* share/eventbridge.mk
+	- add telemetry to alr-helper calls (--report-step)
+
 Wed Jul  8 14:04:32 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.4.0]:

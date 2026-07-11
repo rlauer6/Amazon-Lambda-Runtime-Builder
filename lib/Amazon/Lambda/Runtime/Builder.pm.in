@@ -5,11 +5,20 @@ use warnings;
 
 use Carp;
 use Carp::Always;
+use Cwd qw(getcwd);
 use CLI::Simple::Constants qw(:booleans :chars);
-use CLI::Simple::Utils qw(slurp slurp_json);
+use CLI::Simple::Utils qw(choose slurp slurp_json);
 use Data::Dumper;
 use File::ShareDir qw(dist_dir);
+use File::Basename qw(basename);
+use File::Path qw(make_path);
 use English qw(-no_match_vars);
+use List::Util qw(max none pairs);
+use POSIX qw(strftime);
+use Time::HiRes;
+
+use Readonly;
+Readonly my $LOG_RETENTION_DAYS => 7;  # TODO: override from .alr-builderrc
 
 use Role::Tiny::With;
 
@@ -52,7 +61,336 @@ sub init {
     $self->get_logger->warn("lambda.env generation skipped: $EVAL_ERROR");
   }
 
+  if ( $self->get_color ) {
+    eval { require Term::ANSIColor; };
+    $self->set_color( !$EVAL_ERROR );
+  }
+
   return;
+}
+
+########################################################################
+sub _load_lambda_env {
+########################################################################
+  my ($self) = @_;
+
+  my $file = 'lambda.env';
+  return if !-e $file;
+
+  open my $fh, '<', $file or return;
+
+  while ( my $line = <$fh> ) {
+    chomp $line;
+    next if $line =~ /\A\s*[#]/xsm;  # comments
+    next if $line !~ /\S/;  # blank
+
+    my ( $key, $value ) = $line =~ /\A\s*(\w+)\s*=\s*(.*?)\s*\z/xsm;
+    next if !defined $key;
+
+    $ENV{$key} //= $value;  # //= so a real env override wins
+  }
+
+  close $fh;
+
+  return;
+}
+
+########################################################################
+sub cmd_teardown_lambda {
+########################################################################
+  my ($self) = @_;
+
+  return $self->_run_pipeline( 'lambda-teardown', $self->get_args );
+}
+
+########################################################################
+sub cmd_build_lambda {
+########################################################################
+  my ($self) = @_;
+
+  return $self->_run_pipeline( 'lambda-pipeline', $self->get_args );
+}
+
+########################################################################
+sub _run_pipeline {
+########################################################################
+  my ( $self, $target, @make_args ) = @_;
+
+  $self->_load_lambda_env;
+
+  my $t0 = Time::HiRes::time();
+
+  my $function_name = $ENV{FUNCTION_NAME};
+
+  die "ERROR: unable to determine function name\n"
+    if !$function_name;
+
+  my $cache_dir = $ENV{CACHE_DIR} // sprintf '.cache/%s', $function_name;
+  make_path($cache_dir);
+  local $ENV{CACHE_DIR} = $cache_dir;
+
+  my $stamp = strftime '%Y%m%d-%H%M%S', localtime;
+  my $log   = sprintf '%s/build-%s.log', $cache_dir, $stamp;
+  my $link  = 'build.log';
+
+  if ( -l $link || -e $link ) {
+    unlink $link;
+  }
+
+  symlink $log, $link
+    or warn "symlink: $OS_ERROR";
+
+  $self->_prune_logs($cache_dir);
+
+  # status channel: a pipe. child (make -> report-step) writes the
+  # write-end; we read the read-end here and render.
+  local $^F = 10;
+
+  pipe my ( $status_r, $status_w )
+    or die "pipe failed: $OS_ERROR";
+
+  my $pid = fork // die "fork failed: $OS_ERROR";
+
+  if ( !$pid ) {
+    # ---- child: run make ----
+    close $status_r;
+
+    # put the status pipe on a known fd and tell report-step via env
+    my $fd = fileno $status_w;
+    $ENV{ALR_STATUS_FD} = $fd;
+
+    # make's own stdout+stderr (docker/aws noise) -> build.log
+    open STDOUT, '>>', $log     or die "reopen stdout: $OS_ERROR";
+    open STDERR, '>&', \*STDOUT or die "reopen stderr: $OS_ERROR";
+
+    # verbose output
+    if ( none { $_ =~ /NO_ECHO/xsm } @make_args ) {
+      push @make_args, 'NO_ECHO=';
+    }
+
+    # exec make; the status pipe fd stays open across exec (no close-on-exec)
+    exec 'make', '-f', 'Makefile.builder', $target, @make_args
+      or die "exec make failed: $OS_ERROR";
+  }
+
+  # ---- parent: read + render the status stream ----
+  close $status_w;
+
+  binmode STDOUT, ':encoding(UTF-8)';
+
+  my %started;
+
+  my $t1;
+
+  while ( my $line = <$status_r> ) {
+    chomp $line;
+    my %ev = $line =~ /(\w+)=(\S+)/xsmg;  # step=deploy status=start ...
+    $self->render_status( \%ev, \%started );
+  }
+
+  close $status_r;
+
+  waitpid $pid, 0;
+  my $rc = $CHILD_ERROR >> 8;
+
+  # at the end, after waitpid / rc:
+  my $total_ms = int( ( Time::HiRes::time() - $t0 ) * 1000 );
+
+  printf "%s %s in %s\n", $target, $rc ? 'failed' : 'complete', $self->_fmt_elapsed($total_ms);
+
+  if ($rc) {
+    print {*STDERR} "\nSee $log\n";
+    $self->tail_file( $log, 40 );
+  }
+
+  return $rc;
+}
+
+########################################################################
+sub cmd_report_step {
+########################################################################
+  my ( $self, @args ) = @_;
+
+  my ( $target, $step, $status, @extra ) = choose {
+    return $self->get_args
+      if !@args;
+
+    return @args;
+  };
+
+  die "ERROR: usage: report-step <make-target> <step> <status> [key=value ...]\n"
+    if !$target || !$step;
+
+  my @vars = ( target => $target, step => $step, status => $status // q{}, @extra );
+  my @line;
+
+  foreach my $p ( pairs @vars ) {
+    push @line, sprintf '%s=%s', @{$p};
+  }
+
+  if ( defined $ENV{ALR_STATUS_FD} && open my $fh, '>&=', $ENV{ALR_STATUS_FD} ) {
+    print {$fh} sprintf "%s\n", join q{ }, @line;
+    close $fh;
+  }
+  else {  # bare make => stdout
+    print {*STDOUT} sprintf "%s\n", join q{ }, @line;
+  }
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub tail_file {
+########################################################################
+  my ( $self, $file, $nlines ) = @_;
+
+  my @lines = split /\n/, slurp($file);
+
+  my $start = max( 0, scalar(@lines) - $nlines );
+
+  print {*STDERR} join "\n", splice @lines, $start, $nlines;
+
+  return;
+}
+
+########################################################################
+sub render_status {
+########################################################################
+  my ( $self, $ev, $state ) = @_;
+
+  my $target = $ev->{target};
+  return if !defined $target;
+
+  $target = basename($target);
+
+  my $step   = $ev->{step}   // q{};
+  my $status = $ev->{status} // q{};
+
+  if ( $step eq 'start' ) {
+    $state->{$target} = Time::HiRes::time();
+    $self->_render_output( $status, sprintf "%s %s...\n", $self->_glyph('run'), $target );
+    return;
+  }
+
+  if ( $step eq 'done' ) {
+    my $ms      = $self->_elapsed_ms( $state, $target );
+    my $message = sprintf "%s %s %s\n", $self->_glyph( $status || 'ok' ), $target,
+      $ms ? sprintf( '(%s)', $self->_fmt_elapsed($ms) ) : q{};
+    $self->_render_output( $status, $message );
+
+    return;
+  }
+
+  # sub-step START: announce "in progress", start its timer
+  if ( $status eq 'start' ) {
+    $state->{"$target:$step"} = Time::HiRes::time();
+    $self->_render_output( $status, sprintf "    %s %s...\n", $self->_glyph('run'), $step );
+    return;
+  }
+
+  # sub-step RESULT
+  my $ms = $self->_elapsed_ms( $state, "$target:$step" );
+  $self->_render_output(
+    $status,
+    sprintf "    %s %s%s\n",
+    $self->_glyph( $status || 'ok' ),
+    $step, $ms ? sprintf( ' (%s)', $self->_fmt_elapsed($ms) ) : q{}
+  );
+
+  return;
+}
+
+########################################################################
+sub _render_output {
+########################################################################
+  my ( $self, $status, $message ) = @_;
+
+  if ( $self->get_color ) {
+    my $color = choose {
+      return 'green'
+        if $status eq 'ok';
+
+      return 'red'
+        if $status eq 'fail';
+
+      return 'yellow'
+        if $status eq 'not-found';
+
+      return 'bold white'
+        if $status eq 'start';
+
+      return 'white';
+    };
+
+    $message = Term::ANSIColor::colored( $message, $color );
+  }
+
+  print {*STDOUT} $message;
+
+  return;
+}
+
+########################################################################
+sub _fmt_elapsed {
+########################################################################
+  my ( $self, $ms ) = @_;
+
+  return q{}
+    if !$ms;
+
+  my $min = int( $ms / 60_000 );
+  my $sec = ( $ms % 60_000 ) / 1000;  # fractional seconds (NOT int)
+
+  return sprintf '%dm%04.1fs', $min, $sec
+    if $min;
+
+  return sprintf '%.1fs', $sec;
+}
+
+########################################################################
+sub _prune_logs {
+########################################################################
+  my ( $self, $cache ) = @_;
+
+  my $cutoff = time - ( $LOG_RETENTION_DAYS * 24 * 60 * 60 );
+
+  foreach my $log ( glob "$cache/build-*.log" ) {
+    my $mtime = ( stat $log )[9];
+
+    next if !defined $mtime;  # stat failed (race: file vanished) — skip
+    next if $mtime >= $cutoff;  # within retention window — keep
+
+    unlink $log
+      or warn "could not prune $log: $OS_ERROR";
+  }
+
+  return;
+}
+
+########################################################################
+sub _glyph {
+########################################################################
+  my ( $self, $kind ) = @_;
+
+  my $utf8 = ( $ENV{LANG} // q{} ) =~ /UTF-?8/xsmi;
+
+  my %sym = $utf8
+    ? ( run => "\x{2022}", ok => "\x{2713}", fail => "\x{2717}", 'not-found' => "\x{2013}" )  # –
+    : ( run => '>', ok => '[ok]', fail => '[XX]', 'not-found' => '[--]' );
+
+  return $sym{$kind} // ( $utf8 ? "\x{2022}" : '-' );
+}
+
+########################################################################
+sub _elapsed_ms {
+########################################################################
+  my ( $self, $state, $key ) = @_;
+
+  my $t0 = $state->{$key};
+
+  return 0 if !$t0;
+
+  return int( ( Time::HiRes::time() - $t0 ) * 1000 );
 }
 
 ########################################################################
@@ -60,15 +398,18 @@ sub main {
 ########################################################################
 
   my %commands = (
-    'check'          => \&cmd_dep_check,
-    'check-env-file' => \&cmd_check,
-    'generate-yaml'  => \&cmd_generate_yaml,
-    'install'        => \&cmd_install,
-    'default'        => \&cmd_install,
+    'build-lambda'    => \&cmd_build_lambda,
+    'teardown-lambda' => \&cmd_teardown_lambda,
+    'check'           => \&cmd_dep_check,
+    'check-env-file'  => \&cmd_check,
+    'generate-yaml'   => \&cmd_generate_yaml,
+    'install'         => \&cmd_install,
+    'default'         => \&cmd_install,
   );
 
   my @option_specs = qw(
     help|h
+    color!
     config-file|c=s
     install-dir|i=s
     log-level|l=s
@@ -77,10 +418,11 @@ sub main {
   );
 
   my $cli = Amazon::Lambda::Runtime::Builder->new(
-    commands      => \%commands,
-    option_specs  => \@option_specs,
-    extra_options => [qw(dist_dir manifest lambda_env lambda_yaml)],
-    abbreviations => $TRUE,
+    commands        => \%commands,
+    option_specs    => \@option_specs,
+    extra_options   => [qw(dist_dir manifest lambda_env lambda_yaml)],
+    abbreviations   => $TRUE,
+    default_options => { color => $TRUE },
   );
 
   $cli->run();
@@ -182,14 +524,30 @@ copy is left untouched.
 execution role. One ARN per line; lines beginning with C<#> are comments.
 Installed with C<overwrite: never>.
 
-=item * C<Makefile.builder> - the build engine. A thin, regeneratable
-wrapper that C<include>s the framework's C<Makefile.mk> from this
-distribution's share directory. Installed with C<overwrite: always> -
-safe to regenerate and safe to commit.
+=item * C<Makefile.builder> - the build engine. A thin wrapper, safe to
+regenerate, that C<include>s the framework's C<Makefile.mk> from this
+distribution's share directory - this is where the real target recipes
+live. Installed with C<overwrite: always> - safe to regenerate and safe
+to commit. Two ways to invoke it directly:
 
-=item * C<project.mk> - the file you include from your own C<Makefile>. It
-pulls in the framework's C<builder.mk>, which exposes the user-facing
-targets (each delegates to C<make -f Makefile.builder ...>). If
+=over 4
+
+=item * B<As-is> - C<make -f Makefile.builder E<lt>targetE<gt>>.
+
+=item * B<As your C<Makefile>> - rename or symlink it: C<mv
+Makefile.builder Makefile>, then plain C<make E<lt>targetE<gt>> works.
+Simplest if you don't already have a project C<Makefile>.
+
+=back
+
+=item * C<project.mk> - for projects that already have their own
+C<Makefile>: C<include project.mk> to pull in the same target names
+(C<lambda-pipeline>, C<update-function>, and so on) alongside whatever
+else your C<Makefile> does. Each target it defines sub-makes into
+C<Makefile.builder> by that literal filename, so B<C<Makefile.builder>
+must stay present in the project directory> even when you're driving
+everything through C<project.mk> - it is not a replacement for
+C<Makefile.builder>, just an alternate front door to it. If
 C<project.mk> already exists, the ALRB integration block is appended
 between marker comments and a C<project.mk.bak> backup is written; an
 already-integrated C<project.mk> is left unchanged.
@@ -276,6 +634,10 @@ C<Makefile.mk> applies the same defaults via C<lambda-mapping.yml>.
 =head1 OPTIONS
 
 =over 4
+
+=item C<--color|--no-color>
+
+Turns color status messages printed during a build or teardown on or off.
 
 =item C<--install-dir|-i> DIR
 
@@ -441,6 +803,31 @@ Every field except the ones marked B<required> may be omitted, in which
 case C<lambda-mapping.yml>'s default applies. See L</MAKEFILE TARGETS> for
 how C<role.profile> is applied.
 
+=head2 config.mk
+
+C<lambda.env>/C<lambda.yaml> hold per-Lambda configuration - the values
+that describe I<this> function. Tool-level settings that apply across
+every project on a given machine or in a given shell - which AWS profile
+or account to use, a DarkPAN resolver, and so on - don't belong there,
+since C<lambda.env> may be regenerated from C<lambda.yaml> at any time.
+
+C<config.mk> is an optional C<make> fragment, read via C<-include
+config.mk> at the very top of C<Makefile.mk>, before C<lambda.env> is
+loaded, for exactly this kind of machine- or shell-local override. C<alr-builder
+install> does not create one; if your project's C<Makefile> was
+bootstrapped with L<CPAN::Maker::Bootstrapper>, a default C<config.mk> is
+already there. Otherwise add it yourself:
+
+  # config.mk
+  AWS_PROFILE = my-profile
+  AWS_ACCOUNT = 123456789012
+  RESOLVER    = 02packages,https://cpan.openbedrock.net/orepan2
+
+Because it loads first, anything set here is a default that C<lambda.env>
+and the environment can still override (C<Makefile.mk> uses C<?=> for the
+values it reads). Keep it out of version control if it holds
+machine-specific or credential-adjacent values - add it to C<.gitignore>.
+
 =head1 WORKFLOW
 
 The typical workflow for a new Lambda function:
@@ -462,23 +849,48 @@ B<Verify your environment>:
 
 =item 3.
 
-B<Implement your handler> - edit C<LambdaHandler.pm> or create your own
-handler module, and add its dependencies to your distribution's
-C<cpanfile>/C<META.json>.
+B<Implement your handler> - edit the generated
+C<lib/I<App>/I<Path>/Lambda/Handler.pm> and the C<Event/*.pm> module for
+your trigger type (or replace either with your own), and add their
+dependencies to your distribution's C<cpanfile>/C<META.json> as you
+introduce them.
 
 =item 4.
 
-B<Configure the Lambda> - set C<TRIGGER_TYPE> and C<HANDLER_CLASS> (both
-required) plus any trigger-specific values, either by editing
-C<lambda.env> or by writing a C<lambda.yaml> (see L</CONFIGURATION>).
+B<Configure the Lambda> - C<alr-builder install> already wrote a
+C<lambda.yaml> with C<image.handler> and C<trigger.type> set from the
+C<app-name>/C<trigger-type> you gave it. Fill in any trigger-specific
+required values it doesn't have a default for (e.g. C<trigger.bucket> for
+C<s3-sqs>/C<s3-direct>, C<trigger.topic_name> for C<sns>,
+C<trigger.listener_arn> for C<alb>), and adjust anything else - function
+name, memory, timeout, schedule, and so on - as needed. Run C<alr-builder
+check-env-file> to confirm nothing required is still missing (see
+L</CONFIGURATION>).
 
 =item 5.
 
 B<Build a CPAN distribution> - turn your handler into a standard CPAN
-distribution and run C<make dist> (or your equivalent) to produce a
-tarball. C<make image> resolves C<DIST_TARBALL> to the most recent
-C<$(DIST_NAME)-*.tar.gz> in C<$(BUILDER_HOME)>, where C<DIST_NAME> comes
-from that distribution's C<META.json>.
+distribution and produce a tarball. C<make image> resolves
+C<DIST_TARBALL> to the most recent C<$(DIST_NAME)-*.tar.gz> in
+C<$(BUILDER_HOME)>, where C<DIST_NAME> comes from that distribution's
+C<META.json>.
+
+If you don't already have distribution tooling for the project, consider
+L<CPAN::Maker::Bootstrapper> - it scaffolds a complete CPAN project from
+the assets C<install> just generated:
+
+  cpanm CPAN::Maker::Bootstrapper
+  bootstrapper -I . -i . MyApp
+
+After running the bootstrapper you should have a CPAN distribution
+tarball in your working directory.
+
+From there, edit your handler and run C<make> - your tarball is rebuilt
+automatically. By default, C<make> scans your files for new dependencies,
+updates C<cpanfile>, lints your code (C<perlcritic>, C<perltidy> if
+available), and builds the new tarball. Use C<make quick> to skip linting.
+
+See L<CPAN::Maker::Bootstrapper> for full details.
 
 =item 6.
 

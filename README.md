@@ -12,6 +12,7 @@
 * [CONFIGURATION](#configuration)
   * [Trigger types](#trigger-types)
   * [lambda.yaml structure](#lambdayaml-structure)
+  * [config.mk](#configmk)
 * [WORKFLOW](#workflow)
   * [Phase 1 - Build the container image](#phase-1---build-the-container-image)
   * [Phase 2 - Provision function and event source](#phase-2---provision-function-and-event-source)
@@ -115,13 +116,23 @@ copy is left untouched.
 - `policies` - AWS managed IAM policy ARNs to attach to the Lambda
 execution role. One ARN per line; lines beginning with `#` are comments.
 Installed with `overwrite: never`.
-- `Makefile.builder` - the build engine. A thin, regeneratable
-wrapper that `include`s the framework's `Makefile.mk` from this
-distribution's share directory. Installed with `overwrite: always` -
-safe to regenerate and safe to commit.
-- `project.mk` - the file you include from your own `Makefile`. It
-pulls in the framework's `builder.mk`, which exposes the user-facing
-targets (each delegates to `make -f Makefile.builder ...`). If
+- `Makefile.builder` - the build engine. A thin wrapper, safe to
+regenerate, that `include`s the framework's `Makefile.mk` from this
+distribution's share directory - this is where the real target recipes
+live. Installed with `overwrite: always` - safe to regenerate and safe
+to commit. Two ways to invoke it directly:
+    - **As-is** - `make -f Makefile.builder <target>`.
+    - **As your `Makefile`** - rename or symlink it: `mv
+    Makefile.builder Makefile`, then plain `make <target>` works.
+    Simplest if you don't already have a project `Makefile`.
+- `project.mk` - for projects that already have their own
+`Makefile`: `include project.mk` to pull in the same target names
+(`lambda-pipeline`, `update-function`, and so on) alongside whatever
+else your `Makefile` does. Each target it defines sub-makes into
+`Makefile.builder` by that literal filename, so **`Makefile.builder`
+must stay present in the project directory** even when you're driving
+everything through `project.mk` - it is not a replacement for
+`Makefile.builder`, just an alternate front door to it. If
 `project.mk` already exists, the ALRB integration block is appended
 between marker comments and a `project.mk.bak` backup is written; an
 already-integrated `project.mk` is left unchanged.
@@ -198,6 +209,10 @@ with no default) - fields matching their default are omitted, since
 `Makefile.mk` applies the same defaults via `lambda-mapping.yml`.
 
 # OPTIONS
+
+- `--color|--no-color`
+
+    Turns color status messages printed during a build or teardown on or off.
 
 - `--install-dir|-i` DIR
 
@@ -348,6 +363,31 @@ Every field except the ones marked **required** may be omitted, in which
 case `lambda-mapping.yml`'s default applies. See ["MAKEFILE TARGETS"](#makefile-targets) for
 how `role.profile` is applied.
 
+## config.mk
+
+`lambda.env`/`lambda.yaml` hold per-Lambda configuration - the values
+that describe _this_ function. Tool-level settings that apply across
+every project on a given machine or in a given shell - which AWS profile
+or account to use, a DarkPAN resolver, and so on - don't belong there,
+since `lambda.env` may be regenerated from `lambda.yaml` at any time.
+
+`config.mk` is an optional `make` fragment, read via `-include
+config.mk` at the very top of `Makefile.mk`, before `lambda.env` is
+loaded, for exactly this kind of machine- or shell-local override. `alr-builder
+install` does not create one; if your project's `Makefile` was
+bootstrapped with [CPAN::Maker::Bootstrapper](https://metacpan.org/pod/CPAN%3A%3AMaker%3A%3ABootstrapper), a default `config.mk` is
+already there. Otherwise add it yourself:
+
+    # config.mk
+    AWS_PROFILE = my-profile
+    AWS_ACCOUNT = 123456789012
+    RESOLVER    = 02packages,https://cpan.openbedrock.net/orepan2
+
+Because it loads first, anything set here is a default that `lambda.env`
+and the environment can still override (`Makefile.mk` uses `?=` for the
+values it reads). Keep it out of version control if it holds
+machine-specific or credential-adjacent values - add it to `.gitignore`.
+
 # WORKFLOW
 
 The typical workflow for a new Lambda function:
@@ -361,17 +401,43 @@ The typical workflow for a new Lambda function:
 
         alr-builder check
 
-3. **Implement your handler** - edit `LambdaHandler.pm` or create your own
-handler module, and add its dependencies to your distribution's
-`cpanfile`/`META.json`.
-4. **Configure the Lambda** - set `TRIGGER_TYPE` and `HANDLER_CLASS` (both
-required) plus any trigger-specific values, either by editing
-`lambda.env` or by writing a `lambda.yaml` (see ["CONFIGURATION"](#configuration)).
+3. **Implement your handler** - edit the generated
+`lib/_App_/_Path_/Lambda/Handler.pm` and the `Event/*.pm` module for
+your trigger type (or replace either with your own), and add their
+dependencies to your distribution's `cpanfile`/`META.json` as you
+introduce them.
+4. **Configure the Lambda** - `alr-builder install` already wrote a
+`lambda.yaml` with `image.handler` and `trigger.type` set from the
+`app-name`/`trigger-type` you gave it. Fill in any trigger-specific
+required values it doesn't have a default for (e.g. `trigger.bucket` for
+`s3-sqs`/`s3-direct`, `trigger.topic_name` for `sns`,
+`trigger.listener_arn` for `alb`), and adjust anything else - function
+name, memory, timeout, schedule, and so on - as needed. Run `alr-builder
+check-env-file` to confirm nothing required is still missing (see
+["CONFIGURATION"](#configuration)).
 5. **Build a CPAN distribution** - turn your handler into a standard CPAN
-distribution and run `make dist` (or your equivalent) to produce a
-tarball. `make image` resolves `DIST_TARBALL` to the most recent
-`$(DIST_NAME)-*.tar.gz` in `$(BUILDER_HOME)`, where `DIST_NAME` comes
-from that distribution's `META.json`.
+distribution and produce a tarball. `make image` resolves
+`DIST_TARBALL` to the most recent `$(DIST_NAME)-*.tar.gz` in
+`$(BUILDER_HOME)`, where `DIST_NAME` comes from that distribution's
+`META.json`.
+
+    If you don't already have distribution tooling for the project, consider
+    [CPAN::Maker::Bootstrapper](https://metacpan.org/pod/CPAN%3A%3AMaker%3A%3ABootstrapper) - it scaffolds a complete CPAN project from
+    the assets `install` just generated:
+
+        cpanm CPAN::Maker::Bootstrapper
+        bootstrapper -I . -i . MyApp
+
+    After running the bootstrapper you should have a CPAN distribution
+    tarball in your working directory.
+
+    From there, edit your handler and run `make` - your tarball is rebuilt
+    automatically. By default, `make` scans your files for new dependencies,
+    updates `cpanfile`, lints your code (`perlcritic`, `perltidy` if
+    available), and builds the new tarball. Use `make quick` to skip linting.
+
+    See [CPAN::Maker::Bootstrapper](https://metacpan.org/pod/CPAN%3A%3AMaker%3A%3ABootstrapper) for full details.
+
 6. **Deploy** - provision the image, role, function, log group, and the event
 source for your trigger type in one step:
 

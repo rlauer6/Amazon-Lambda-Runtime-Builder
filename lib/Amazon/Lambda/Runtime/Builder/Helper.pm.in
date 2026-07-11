@@ -3,14 +3,15 @@ package Amazon::Lambda::Runtime::Builder::Helper;
 use strict;
 use warnings;
 
-use CLI::Simple::Constants qw(:booleans);
+use CLI::Simple::Constants qw(:booleans :chars);
 use CLI::Simple::Utils qw(choose slurp_json slurp toPascalCase);
 use Data::Dumper;
 use English qw(-no_match_vars);
 use File::Basename qw(basename);
 use JSON;
-use List::Util qw(none);
-use Scalar::Util qw(reftype);
+use List::Util qw(none pairs);
+use POSIX qw(fstat);
+use Scalar::Util qw(reftype blessed);
 
 use Role::Tiny::With;
 with 'Amazon::Lambda::Runtime::Builder::Role::CloudFront';
@@ -164,18 +165,62 @@ sub _resolve_file_arg {
 }
 
 ########################################################################
+sub _handle_return {
+########################################################################
+  my ( $self, $status, $err ) = @_;
+
+  my $report_step = $self->get_report_step;  # make target
+
+  return $status
+    if !$report_step;
+
+  my $step_status = choose {
+    if ( !$err || !blessed $err ) {
+      return $status eq $SUCCESS ? 'ok' : 'fail';
+    }
+
+    my $err_code = $err->get_error;
+
+    return 'not-found'
+      if $err_code && $err_code eq '404';
+
+    my $message = $err->get_response;
+
+    return 'fail'
+      if !ref $message;  # let's not guess
+
+    return 'not-found'
+      if ref $message->{Error} && $message->{Error}->{Code} eq 'NoSuchEntity';
+
+    return 'not-found'
+      if $message->{__type} && $message->{__type} =~ /notfound/xsmi;
+
+    return 'fail';
+  };
+
+  my $step = $self->command;
+
+  $self->cmd_report_step( $report_step, $step, $step_status );
+
+  return $status;
+}
+
+########################################################################
 sub _handle_response {
 ########################################################################
   my ( $self, $rsp, $filter ) = @_;
 
-  if ($EVAL_ERROR) {
-    print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
+  my $err = $EVAL_ERROR;
+
+  if ($err) {
+    print {*STDERR} $err;
+
+    return $self->_handle_return( $FAILURE, $err );
   }
 
   if ( !$rsp || !$filter || !ref $rsp ) {
     print {*STDOUT} $rsp && ref $rsp ? JSON->new->pretty->encode($rsp) : defined $rsp ? $rsp : q{};
-    return $SUCCESS;
+    return $self->_handle_return($SUCCESS);
   }
 
   require Data::NestedKey;
@@ -199,6 +244,39 @@ sub _fetch_meta {
   my $meta      = $tar->get_content("$dist_name/META.json");
 
   return decode_json($meta);
+}
+
+########################################################################
+sub cmd_report_step {
+########################################################################
+  my ( $self, @args ) = @_;
+
+  my ( $target, $step, $status, @extra ) = choose {
+    return $self->get_args
+      if !@args;
+
+    return @args;
+  };
+
+  die "ERROR: usage: report-step <make-target> <step> <status> [key=value ...]\n"
+    if !$target || !$step;
+
+  my @vars = ( target => $target, step => $step, status => $status // q{}, @extra );
+  my @line;
+
+  foreach my $p ( pairs @vars ) {
+    push @line, sprintf '%s=%s', @{$p};
+  }
+
+  if ( defined $ENV{ALR_STATUS_FD} && open my $fh, '>&=', $ENV{ALR_STATUS_FD} ) {
+    print {$fh} sprintf "%s\n", join q{ }, @line;
+    close $fh;
+  }
+  else {  # bare make => stdout
+    print {*STDOUT} sprintf "%s\n", join q{ }, @line;
+  }
+
+  return $SUCCESS;
 }
 
 ########################################################################
@@ -407,6 +485,7 @@ sub main {
     'remove-targets'                   => \&cmd_eventbridge_remove_targets,
     'remove-bucket-notification'       => \&cmd_s3_remove_bucket_notification_configuration,
     'remove-permission'                => \&cmd_lambda_remove_permission,
+    'report-step'                      => \&cmd_report_step,
     'set-queue-bucket-policy'          => \&cmd_sqs_set_queue_bucket_policy,
     'set-queue-redrive-policy'         => \&cmd_sqs_set_queue_redrive_policy,
     'subscribe'                        => \&cmd_sns_subscribe,
@@ -426,6 +505,7 @@ sub main {
     log-level|l=s
     output|o=s
     region|r=s
+    report-step|R=s
     tarball|t=s help|h
     timeout|T=i
     wait|w=i

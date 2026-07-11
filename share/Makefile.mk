@@ -1,11 +1,12 @@
 #-*- mode: makefile; -*-
+
 SHELL := /bin/bash
 
 .SHELLFLAGS := -ec
 
 -include config.mk
 
-LAMBDA_ENV ?= lambda.env
+LAMBDA_ENV  ?= lambda.env
 LAMBDA_YAML ?= lambda.yaml
 
 NEEDS_LAMBDA_ENV := $(filter-out clean,$(MAKECMDGOALS))
@@ -30,7 +31,7 @@ TRIGGER_TYPE  := $(strip $(TRIGGER_TYPE))
 AWS_PROFILE   ?= default
 REGION        ?= us-east-1
 AWS_ACCOUNT   ?= $(shell alr-helper get-account)
-NOCACHE       ?=
+NO_CACHE      ?=
 TIMEOUT       ?= 30
 BUILDER_HOME  ?= $(CURDIR)
 CACHE_DIR     := $(BUILDER_HOME)/.cache/$(FUNCTION_NAME)
@@ -94,7 +95,9 @@ $(CACHE_DIR):
 # generate cpanfile from tarball META.json (runtime + configure prereqs)
 ########################################################################
 $(CACHE_DIR)/cpanfile: $(DIST_TARBALL) | $(CACHE_DIR)
-	$(NO_ECHO)alr-helper create-cpanfile --tarball $(DIST_TARBALL) > $@
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	alr-helper create-cpanfile --tarball $(DIST_TARBALL) > $@; \
+	alr-helper report-step $@ done ok
 
 ########################################################################
 # generate debian-packages from cpanfile via cpan-sysdeps
@@ -102,21 +105,26 @@ $(CACHE_DIR)/cpanfile: $(DIST_TARBALL) | $(CACHE_DIR)
 ########################################################################
 $(CACHE_DIR)/debian-packages: $(CACHE_DIR)/cpanfile
 	$(NO_ECHO)if command -v cpan-sysdeps > /dev/null 2>&1; then \
-	    cpan-sysdeps find-deps --cpanfile $< > $@; \
+	  alr-helper report-step $@ start; \
+	  cpan-sysdeps find-deps --cpanfile $< > $@; \
+	  alr-helper report-step $@ done ok; \
 	else \
-	    touch $@; \
+	  touch $@; \
 	fi
 
 ########################################################################
 # validate tarball contains LambdaHandler.pm before building image
 ########################################################################
 $(CACHE_DIR)/tarball-validated: $(DIST_TARBALL) | $(CACHE_DIR)
-	$(NO_ECHO)module_path=$$(echo $(HANDLER_CLASS) | sed -e 's/::/\//g'); \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	module_path=$$(echo $(HANDLER_CLASS) | sed -e 's/::/\//g'); \
 	alr-helper --tarball $(DIST_TARBALL) check "lib/$${module_path}.pm" || { \
 	  echo "ERROR: $(HANDLER_CLASS) not found in $(DIST_TARBALL)" >&2; \
+	  alr-helper report-step $@ done fail; \
 	  exit 1; \
 	}; \
-	touch $@ && chmod 444 $@
+	touch $@ && chmod 444 $@; \
+	alr-helper report-step $@ done ok
 
 ########################################################################
 # create Docker image
@@ -126,7 +134,8 @@ $(CACHE_DIR)/image: \
     $(DIST_TARBALL) \
     $(CACHE_DIR)/debian-packages \
     $(CACHE_DIR)/tarball-validated | $(CACHE_DIR)
-	$(NO_ECHO)test -e $@ && chmod -f 644 $@; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	test -e $@ && chmod -f 644 $@; \
 	buildctx=$$(mktemp -d); trap 'rm -rf $$buildctx' EXIT; \
 	cp $(FRAMEWORK_DIR)/Dockerfile $$buildctx/; \
 	cp $(CACHE_DIR)/cpanfile $$buildctx/; \
@@ -135,7 +144,8 @@ $(CACHE_DIR)/image: \
 	if [[ -n "$(RESOLVER)" ]]; then \
 	  resolver="--build-arg RESOLVER=\"--resolver $(RESOLVER)\""; \
 	fi; \
-	docker build $(NOCACHE) \
+	alr-helper report-step $@ docker-build start; \
+	docker build $(NO_CACHE) \
 	  --build-arg DIST_TARBALL=$$(basename $(DIST_TARBALL)) \
 	  --build-arg CACHE_BUST="$(CACHE_BUST)" \
 	  --build-arg HANDLER_CLASS=$(HANDLER_CLASS) \
@@ -143,56 +153,53 @@ $(CACHE_DIR)/image: \
 	  --build-arg EXTRA_RUNTIME_PACKAGES="$(EXTRA_RUNTIME_PACKAGES)" \
 	  $$(test -n "$(PLATFORM_IMAGE)" && echo "--build-arg PLATFORM_IMAGE=$(PLATFORM_IMAGE)") \
 	  $$resolver \
-	  -f $$buildctx/Dockerfile -t $(REPO_NAME) $$buildctx && \
-	docker inspect $(REPO_NAME):latest > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
+	  -f $$buildctx/Dockerfile -t $(REPO_NAME) $$buildctx 2>&1 && \
+	alr-helper report-step $@ docker-build ok; \
+	docker inspect $(REPO_NAME):latest > $@ && chmod 444 $@ || { rm -f $@; exit 1; }; \
+	alr-helper report-step $@ docker-inspect ok; \
+	alr-helper report-step $@ done ok
+
 
 include $(FRAMEWORK_DIR)/ecr-create-repo.mk
-
-include $(FRAMEWORK_DIR)/ecr-login.mk
 
 ########################################################################
 # push image to ECR repository
 ########################################################################
 $(CACHE_DIR)/deploy: $(CACHE_DIR)/ecr-repo $(CACHE_DIR)/image | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true
-	$(call ecr_login,$(shell cat $(CACHE_DIR)/ecr-repo))
-	$(NO_ECHO)URI=$$(cat $(CACHE_DIR)/ecr-repo); \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
+	URI="$$(cat $(CACHE_DIR)/ecr-repo)"; \
+	PASSWORD="$$(alr-helper --report-step $@ get-login-password)"; \
+	echo "$$PASSWORD" | docker login --username AWS --password-stdin $$URI; \
+	alr-helper report-step $@ docker-login ok; \
 	docker tag $(REPO_NAME):latest $$URI:latest; \
-	docker push $$URI:latest > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
-
-########################################################################
-define create_assume_role_policy
-########################################################################
-use JSON;
-
-print encode_json({ 
-   Version   => "2012-10-17", 
-   Statement => [{ 
-     Effect    => "Allow", 
-     Principal => { Service => $ENV{service} }, 
-     Action    => "sts:AssumeRole"
-   }]
- });
-endef
-
-export s_create_assume_policy = $(value create_assume_role_policy)
+	alr-helper report-step $@ docker-tag ok; \
+	alr-helper report-step $@ docker-push start; \
+	docker push $$URI:latest > $@ && chmod 444 $@ || { rm -f $@; exit 1; }; \
+	alr-helper report-step $@ docker-push ok; \
+	alr-helper report-step $@ done ok
 
 ########################################################################
 # create Lambda role & policy
 ########################################################################
 
 $(CACHE_DIR)/policy-document: | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ || true; \
-	alr-helper create-assume-policy lambda.amazonaws.com > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ || true; \
+	alr-helper --report-step $@ create-assume-policy lambda.amazonaws.com > $@ && \
+	chmod 444 $@ || { rm -f $@; exit 1; }; \
+	alr-helper report-step $@ done ok
 
 $(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
-	if alr-helper get-role $(ROLE_NAME) > $@ 2>/dev/null; then \
-	    echo "role $(ROLE_NAME) already exists"; \
-	    chmod 444 $@; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
+	if alr-helper --report-step $@ get-role $(ROLE_NAME) > $@ 2>/dev/null; then \
+	  echo "role $(ROLE_NAME) already exists"; \
+	  chmod 444 $@; \
 	else \
-	    alr-helper create-role $(ROLE_NAME) $< > $@ && chmod 444 $@ || { rm -f $@; exit 1; }; \
-	fi
+	  alr-helper --report-step $@ create-role $(ROLE_NAME) $< > $@ && chmod 444 $@ || { rm -f $@; exit 1; }; \
+	fi; \
+	alr-helper report-step $@ done ok
 
 POLICIES_FILE        ?= policies
 CUSTOM_POLICIES_FILE ?= custom-policies.json
@@ -210,31 +217,40 @@ else
 endif
 
 $(CACHE_DIR)/lambda-managed-policies: $(CACHE_DIR)/lambda-role $(POLICIES_PREREQ) | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
 	policies=$$(mktemp); trap 'rm -f $$policies' EXIT; \
-	$(ATTACH_POLICIES_CMD) > $$policies && cp $$policies $@ && chmod 444 $@ || { rm -f $@; exit 1; }
+	$(ATTACH_POLICIES_CMD) --report-step $@ > $$policies && cp $$policies $@ && chmod 444 $@ || { rm -f $@; exit 1; }; \
+	alr-helper report-step $@ done ok;
+
 
 $(CACHE_DIR)/lambda-inline-policies: $(CACHE_DIR)/lambda-role $(wildcard $(CUSTOM_POLICIES_FILE)) | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
 	if [[ -e "$(CUSTOM_POLICIES_FILE)" ]]; then \
-	  alr-helper put-role-policies role-name:$(ROLE_NAME) policy-document:file://$(CUSTOM_POLICIES_FILE) || { rm -f $@; exit 1; }; \
+	  alr-helper --report-step $@ put-role-policies role-name:$(ROLE_NAME) policy-document:file://$(CUSTOM_POLICIES_FILE) || { rm -f $@; exit 1; }; \
 	fi; \
-	echo "$(CUSTOM_POLICIES_FILE)" > $@ && chmod 444 $@
+	echo "$(CUSTOM_POLICIES_FILE)" > $@ && chmod 444 $@; \
+	alr-helper report-step $@ done ok
 
 $(CACHE_DIR)/lambda-policies: $(CACHE_DIR)/lambda-managed-policies $(CACHE_DIR)/lambda-inline-policies | $(CACHE_DIR)
 	$(NO_ECHO)touch $@ && chmod 444 $@
 
 .PHONY: update-managed-policies
 update-managed-policies: $(POLICIES_PREREQ) ## re-attach AWS managed IAM policies
-	$(NO_ECHO)chmod -f 644 $(CACHE_DIR)/lambda-managed-policies 2>/dev/null || true; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $(CACHE_DIR)/lambda-managed-policies 2>/dev/null || true; \
 	rm -f $(CACHE_DIR)/lambda-managed-policies; \
-	$(MAKE) -f $(firstword $(MAKEFILE_LIST)) $(CACHE_DIR)/lambda-managed-policies
+	$(MAKE) -f $(firstword $(MAKEFILE_LIST)) $(CACHE_DIR)/lambda-managed-policies; \
+	alr-helper report-step $@ done ok
 
 .PHONY: update-inline-policies
 update-inline-policies: ## re-apply custom inline IAM policies from $(CUSTOM_POLICIES_FILE)
-	$(NO_ECHO)chmod -f 644 $(CACHE_DIR)/lambda-inline-policies 2>/dev/null || true; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $(CACHE_DIR)/lambda-inline-policies 2>/dev/null || true; \
 	rm -f $(CACHE_DIR)/lambda-inline-policies; \
-	$(MAKE) -f $(firstword $(MAKEFILE_LIST)) $(CACHE_DIR)/lambda-inline-policies
+	$(MAKE) -f $(firstword $(MAKEFILE_LIST)) $(CACHE_DIR)/lambda-inline-policies;
+	alr-helper report-step $@ done ok
 
 .PHONY: update-policies
 update-policies: update-managed-policies update-inline-policies ## re-attach all IAM policies (managed + custom inline)
@@ -244,40 +260,49 @@ update-policies: update-managed-policies update-inline-policies ## re-attach all
 ########################################################################
 
 $(CACHE_DIR)/image-digest: $(CACHE_DIR)/deploy | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
-	digest="$$(alr-helper describe-images $(REPO_NAME) filter=imageDigest)"; \
-	echo "$$digest" > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
+	digest="$$(alr-helper --report-step $@ describe-images $(REPO_NAME) filter=imageDigest)"; \
+	echo "$$digest" > $@ && chmod 444 $@ || { rm -f $@; exit 1; }; \
+	alr-helper report-step $@ done ok;
 
 $(CACHE_DIR)/lambda-function: \
     $(CACHE_DIR)/image-digest \
     $(CACHE_DIR)/ecr-repo \
     $(CACHE_DIR)/lambda-role \
     $(CACHE_DIR)/lambda-policies | $(CACHE_DIR)
+	$(NO_ECHO)alr-helper report-step $@ start; \
 	chmod -f 644 $@ 2>/dev/null || true; \
 	DIGEST="$$(cat $(CACHE_DIR)/image-digest)"; \
 	URI="$$(cat $(CACHE_DIR)/ecr-repo)"; \
-	function="$$(alr-helper get-function $(FUNCTION_NAME) 2>/dev/null)"; \
+	function="$$(alr-helper --report-step $@ get-function $(FUNCTION_NAME) 2>/dev/null)"; \
 	if echo "$$function" | grep -q '"FunctionName"'; then \
-	  alr-helper update-function $(FUNCTION_NAME) $$URI $$DIGEST; \
+	  response="$$(alr-helper --report-step $@ update-function $(FUNCTION_NAME) $$URI $$DIGEST)"; \
 	elif [[ -z "$$function" ]]; then \
-	  alr-helper create-function $(FUNCTION_NAME) $(ROLE_NAME) $$URI; \
+	  response="$$(alr-helper --report-step $@ create-function $(FUNCTION_NAME) $(ROLE_NAME) $$URI)"; \
 	else \
 	  echo "ERROR: get-function failed: $$function" >&2; exit 1; \
 	fi; \
-	echo "$$URI@$$DIGEST" > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
+	echo "$$URI@$$DIGEST" > $@ && chmod 444 $@ || { rm -f $@; exit 1; }; \
+	alr-helper report-step $@ done ok;
 
 MEMORY ?= 128
 
 $(CACHE_DIR)/lambda-configuration: $(CACHE_DIR)/lambda-function $(CACHE_DIR)/log-group $(LAMBDA_ENV) $(wildcard lambda-handler.env) | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
-	alr-helper update-function-configuration $(FUNCTION_NAME) memory-size:$(MEMORY) timeout:$(TIMEOUT) > $@ && chmod 444 $@
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
+	alr-helper --report-step $@ update-function-configuration $(FUNCTION_NAME) \
+	  memory-size:$(MEMORY) timeout:$(TIMEOUT) > $@ && chmod 444 $@; \
+	alr-helper report-step $@ done ok
 
 lambda-configuration: $(CACHE_DIR)/lambda-configuration ## update function memory/timeout from $(LAMBDA_ENV)
 
 .PHONY: update-lambda-configuration
 update-lambda-configuration: ## force update of Lambda function configuration from $(LAMBDA_ENV)
-	$(NO_ECHO)rm -f $(CACHE_DIR)/lambda-configuration || true; \
-	$(MAKE) -f $(firstword $(MAKEFILE_LIST)) lambda-configuration
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	rm -f $(CACHE_DIR)/lambda-configuration || true; \
+	$(MAKE) -f $(firstword $(MAKEFILE_LIST)) lambda-configuration; \
+	alr-helper report-step $@ done ok
 
 .PHONY: lambda-pipeline
 lambda-pipeline: ## provision full Lambda infrastructure for trigger type

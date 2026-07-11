@@ -132,7 +132,7 @@ With that vocabulary in hand — image and bootstrap, handler, trigger, the AWS 
 
 ALRB orchestrates other tools rather than replacing them, so a short list of things needs to be in place before your first build. None of it is exotic; most of it you likely already have.
 
-**A Perl toolchain with `cpm`.** You need a Perl you can install modules into, and the `cpm` installer (`App::cpm`). `cpm` is what the framework uses inside the image to resolve dependencies, and it's the smoothest way to install the framework itself. If you can already install from CPAN, you're set; if `cpm` isn't present, install it the way you install anything else (`cpanm App::cpm`, or fetch the standalone script).
+**A Perl you can install modules into.** You need a Perl toolchain and a CPAN client to install the framework itself — `cpanm`, `cpm`, or whatever you already use. `cpm` (`App::cpm`) is not something you need locally: the image build fetches and installs its own copy of `cpm` inside the container, so dependency resolution for your handler happens entirely in the Docker build, not on your machine.
 
 **Docker.** The handler is a container image, so a working Docker (a running daemon and a `docker` you can invoke) is non-negotiable. ALRB shells out to `docker build` and `docker push`; it doesn't wrap or hide it.
 
@@ -173,13 +173,18 @@ This is the section to follow straight through. By the end you'll have a Perl fu
 Create a directory and scaffold into it:
 
 ```
-alr-builder install --install-dir hello-lambda
+alr-builder install HelloLambda --install-dir hello-lambda
 cd hello-lambda
 ```
 
-Four files land, and it's worth knowing what each is before you touch them:
+No trigger type was given, so it defaults to `eventbridge` — the one this walkthrough uses.
 
-- **`LambdaHandler.pm`** — a handler template with worked examples for every event type. In the next step you'll strip it down to just the one you need.
+A handful of files land, and it's worth knowing what each is before you touch them:
+
+- **`lib/HelloLambda/Lambda/Handler.pm`** — your handler class. It already registers the `eventbridge` trigger (the one you asked for); the registration lines for the other four trigger types are present but commented out, so switching or adding a trigger later is a one-line edit rather than a re-scaffold.
+- **`lib/HelloLambda/Lambda/Event/EventBridge.pm`** — the event module for your trigger, with a working `on_event` that logs the event and its detail. This is what you'll edit in the next step.
+- **`lib/HelloLambda/Lambda/Event/{SQS,SNS,S3,ALB}.pm`** — the same for the other four trigger types, generated but unregistered. Ignore them for now; they cost nothing sitting unused.
+- **`lambda.yaml`** — already has `image.handler` and `trigger.type` filled in for you, copied from the `eventbridge` reference config. You'll add one value to it in 4.3.
 - **`policies`** — the AWS managed-policy ARNs attached to your function's execution role. The default entry grants CloudWatch logging, which is all this function needs.
 - **`Makefile.builder`** — the build engine. You don't edit it; it pulls in the framework's machinery from the installed distribution.
 - **`project.mk`** — the file your own `Makefile` includes to expose the `make` targets you'll run. (If you already had a `project.mk`, ALRB appends its section and leaves a `.bak` backup.)
@@ -188,10 +193,10 @@ Notably absent: no Dockerfile, no per-trigger makefiles. Those live in the frame
 
 ### 4.2 Write a trivial handler
 
-The scaffolded `LambdaHandler.pm` handles SQS, SNS, S3, and EventBridge to show you the shape of each. For a first function, delete all of that and keep the smallest thing that proves the loop works — an EventBridge handler that logs a greeting:
+Open `lib/HelloLambda/Lambda/Event/EventBridge.pm`. It already does something reasonable — logs the event's detail-type, source, and payload:
 
 ```perl
-package Event::EventBridge;
+package HelloLambda::Lambda::Event::EventBridge;
 
 use strict;
 use warnings;
@@ -201,44 +206,50 @@ use parent qw(Amazon::Lambda::Runtime::Event::EventBridge);
 sub on_event {
   my ( $self, $detail_type, $detail, $event ) = @_;
 
+  my $logger = $self->get_logger;
+
+  $logger->info('handling EventBridge event');
+  $logger->info( Dumper( [ detail_type => $detail_type, source => $event->{source}, detail => $detail ] ) );
+
+  return;
+}
+
+1;
+```
+
+For a first function, trim that down to the smallest thing that proves the loop works — a single greeting line:
+
+```perl
+sub on_event {
+  my ( $self, $detail_type, $detail, $event ) = @_;
+
   $self->get_logger->info(
     sprintf 'hello from a Perl Lambda! detail-type=%s source=%s',
     $detail_type, $event->{source} );
 
   return;
 }
-
-package LambdaHandler;
-
-use strict;
-use warnings;
-
-use parent qw(Amazon::Lambda::Runtime);
-
-use Amazon::Lambda::Runtime::Event qw(:all);
-
-__PACKAGE__->register_event_handler( $EVENT_EVENTBRIDGE => 'Event::EventBridge' );
-
-1;
 ```
 
-Two things are happening here. `LambdaHandler` is your handler *class* — the one you'll name in configuration — and it inherits the runtime and registers a mapping: "when an EventBridge event arrives, dispatch it to `Event::EventBridge`." That second class inherits the EventBridge base and implements `on_event`, which receives the event's detail-type, its detail payload, and the raw event. The runtime does the routing; you write only the method for the event you care about. That's the entire handler contract, and Section 6 covers the rest of it.
+You didn't have to write `HelloLambda::Lambda::Handler` at all — `install` already generated it, already registered against the trigger you chose. That's the whole handler contract for now; Section 6 covers the rest of it.
 
 Keeping the handler to a single event type isn't just tidiness — every `use` in this file becomes a dependency baked into the image, so a focused handler is a leaner container. That thread runs through the whole framework and gets its own section (9).
 
 ### 4.3 Configure it
 
-Your Lambda's configuration lives in `lambda.env`, but the friendlier way to start is a small `lambda.yaml` that lists only what you care about; ALRB fills in every other value from its defaults. Create `lambda.yaml`:
+`lambda.yaml` already has what it needs to deploy — `image.handler: 'HelloLambda::Lambda::Handler'` and `trigger.type: eventbridge` were written by `install`. Add one thing, a fast schedule so you don't wait a full day to see it fire on its own:
 
 ```yaml
 image:
-  handler: LambdaHandler
+  handler: 'HelloLambda::Lambda::Handler'
 lambda:
   name: hello-lambda
 trigger:
   type: eventbridge
   schedule: rate(1 minute)
 ```
+
+(`lambda.name` isn't required — omit it and the function is named `lambda-handler` — but naming it here keeps the CloudWatch log group and later commands easy to recognize.)
 
 Only two values are strictly required — `handler` (which handler class the container loads) and `trigger.type` — and everything else here is just to make the demo concrete: a function name, and a one-minute schedule so you don't wait long to see it fire. You can confirm what's set versus defaulted at any time:
 
@@ -250,7 +261,7 @@ Section 7 covers the `lambda.yaml`/`lambda.env` model in full; for now this is e
 
 ### 4.4 Build a distribution tarball
 
-ALRB deploys a *standard CPAN distribution* — it does not care how you produce one. The contract is simple: build a distribution whose primary module is your handler class (so `LambdaHandler` installs as `lib/LambdaHandler.pm`), and leave the resulting `*.tar.gz` in the project directory. ALRB picks up the newest tarball whose name matches the distribution and reads its `META.json` to learn the distribution name and the prerequisites to install into the image.
+ALRB deploys a *standard CPAN distribution* — it does not care how you produce one. The contract is simple: build a distribution whose primary module is your handler class (so `HelloLambda::Lambda::Handler` installs as `lib/HelloLambda/Lambda/Handler.pm`), and leave the resulting `*.tar.gz` in the project directory. ALRB picks up the newest tarball whose name matches the distribution and reads its `META.json` to learn the distribution name and the prerequisites to install into the image.
 
 Use whatever you already use — `ExtUtils::MakeMaker` and `make dist`, `Dist::Zilla`, `Minilla`, or anything else that emits a conventional tarball. If you'd like a packaging path that dovetails with ALRB (and shares its minimal-dependency lineage), see **Appendix B**.
 
@@ -261,10 +272,26 @@ Once built, you should have something like `hello-lambda-1.0.0.tar.gz` sitting a
 One command provisions everything for the configured trigger type:
 
 ```
-make lambda-pipeline
+alr-builder build-lambda
 ```
 
-Watch it work through the chain from Section 2: it builds the image (installing your distribution with `cpm`), pushes it to ECR, creates the execution role and attaches the policy, creates the function, sets its log-group retention, and wires the EventBridge schedule to invoke it. Every step announces itself, and every step is idempotent — if anything fails partway, fix it and run the same command again; it resumes where it left off.
+Instead of raw `make`/`docker` output scrolling past, you get a live, structured progress stream:
+
+```
+• image...
+    ✓ platform (0.4s)
+    ✓ handler (11.8s)
+✓ image (12.2s)
+• lambda-function...
+    ✓ create (1.1s)
+✓ lambda-function (1.1s)
+• eventbridge-trigger...
+    ✓ rule (0.6s)
+✓ eventbridge-trigger (0.6s)
+build-lambda complete in 14.7s
+```
+
+That's the same chain from Section 2 — build the image (installing your distribution with `cpm`), push to ECR, create the execution role and attach the policy, create the function, set its log-group retention, and wire the EventBridge schedule — just rendered legibly instead of dumped as raw `docker`/`aws` output. The full log is saved if you need it (Section 5 covers where). Every step is still idempotent — if anything fails partway, fix it and run the same command again; it resumes where it left off.
 
 To invoke the function directly, without waiting for the schedule:
 
@@ -281,18 +308,18 @@ A clean return with no error is your first success: the function is live and you
 Because the schedule is live, leave nothing running once you've seen it work:
 
 ```
-make lambda-teardown
+alr-builder teardown-lambda
 ```
 
-This disables and deletes the EventBridge rule, deletes the function, detaches policies and deletes the role, removes the ECR repository, and deletes the log group — the exact inverse of the pipeline. You can rebuild the whole thing at any time by running `make lambda-pipeline` again.
+This disables and deletes the EventBridge rule, deletes the function, detaches policies and deletes the role, removes the ECR repository, and deletes the log group — the exact inverse of the pipeline, rendered the same way `build-lambda` was. You can rebuild the whole thing at any time by running `alr-builder build-lambda` again.
 
 That's the full loop: scaffold, handle, configure, build, deploy, invoke, tear down. The next section walks back through what just happened, so the machinery stops being a black box.
 
 ## 5. What just happened
 
-`make lambda-pipeline` ran a dozen steps in a few seconds and scrolled most of them past you. None of it was magic, and none of it was hidden — every line was an ordinary `make` target doing one small, inspectable thing. Here's the same sequence at walking pace, because understanding it once is what turns the pipeline from something you trust into something you can *drive*.
+`alr-builder build-lambda` ran a dozen steps in a few seconds and showed you each one as it completed, instead of a scroll of raw `docker`/`aws` output. None of it was magic, and none of it is hidden even though it's now compact — the full `make`/`docker` output is still captured, just to a log file rather than your terminal (Section 12 covers where). Here's the same sequence at walking pace, because understanding it once is what turns the pipeline from something you trust into something you can *drive*.
 
-1. **The image was built.** First the framework validated your tarball actually contains the handler you named (`lib/LambdaHandler.pm`) — a fast failure now beats a broken container later. Then it read your distribution's `META.json`, generated a `cpanfile` from its prerequisites on the fly, and ran `docker build`: starting from the `perl-lambda-base` image (interpreter, bootstrap, runtime driver already in place), it installed your distribution and its dependencies with `cpm` on top. Your handler's `use` lines are exactly what got installed here — the whole of what makes this image bigger than the base.
+1. **The image was built.** First the framework validated your tarball actually contains the handler you named (`lib/HelloLambda/Lambda/Handler.pm`) — a fast failure now beats a broken container later. Then it read your distribution's `META.json`, generated a `cpanfile` from its prerequisites on the fly, and ran `docker build`: starting from the `perl-lambda-base` image (interpreter, bootstrap, runtime driver already in place), it installed your distribution and its dependencies with `cpm` on top. Your handler's `use` lines are exactly what got installed here — the whole of what makes this image bigger than the base.
 
 2. **The image was pushed to ECR.** The registry repository was created if it didn't already exist, Docker authenticated to it, and the image was pushed. From this point Lambda has somewhere to pull your code from. Note that the framework tracks the image by its *digest*, not by a `:latest` tag — so when you later update the function, it points at the exact image you just built, with no ambiguity about which version is running.
 
@@ -306,7 +333,7 @@ That's the full loop: scaffold, handle, configure, build, deploy, invoke, tear d
 
 Notice the shape of that sequence: the function is built completely before anything is allowed to invoke it. That's the function-versus-trigger split from Section 2 made concrete — steps 1–5 build a function you could invoke by hand (as `make invoke` did), and step 6 is the event source that invokes it for you. The two halves are independent, which is why you can change a trigger later without rebuilding the function, or invoke the function directly to debug it in isolation from its trigger.
 
-And this is where the "safe to re-run" promise pays off. Each of those steps recorded its completion as a sentinel file under `.cache/hello-lambda/`. Run `make lambda-pipeline` again right now and almost nothing happens — every sentinel is present, so every step reports itself already done. That's not a special "resume" mode; it's the same *done-until-invalidated* rule every time. It means a half-finished deploy is never a wedged deploy: fix whatever failed, run the identical command, and the pipeline picks up exactly where it stopped. It also means you're never guessing about state — the sentinels *are* the state, sitting in a directory you can list, and any single step is a target you can force by removing its sentinel. Which is precisely the lever Section 9 reaches for when the question becomes "I changed one thing — what has to rebuild?"
+And this is where the "safe to re-run" promise pays off. Each of those steps recorded its completion as a sentinel file under `.cache/hello-lambda/`. Run `alr-builder build-lambda` again right now and almost nothing happens — every sentinel is present, so every step reports itself already done. That's not a special "resume" mode; it's the same *done-until-invalidated* rule every time. It means a half-finished deploy is never a wedged deploy: fix whatever failed, run the identical command, and the pipeline picks up exactly where it stopped. It also means you're never guessing about state — the sentinels *are* the state, sitting in a directory you can list, and any single step is a target you can force by removing its sentinel. Which is precisely the lever Section 9 reaches for when the question becomes "I changed one thing — what has to rebuild?"
 
 That's the whole pipeline, demystified. From here the guide stops moving in a straight line: Part II takes the pieces you just watched — the handler, the configuration, the triggers, the image, the permissions — one at a time, in depth. If you only wanted a working Perl Lambda, you already have the recipe. If you want to *understand* it, read on.
 
@@ -387,6 +414,8 @@ The consequence worth internalizing: with a `lambda.yaml` in the project, `lambd
 **Checking configuration.** `alr-builder check-env-file` reads whatever you have (a `lambda.yaml`, a `lambda.env`, or neither) and reports against the mapping, scoped to your trigger type. It sorts every applicable field into three groups — *missing* required values with no default, values you've *customized* away from the default, and values *using defaults* — so you can see at a glance what you've set, what you've inherited, and what you still owe. Running it against a brand-new project with nothing configured is a useful way to see the full set of required and defaulted fields for a given trigger before you write anything. Beyond presence, it also applies a few per-trigger sanity checks and warns on values that are individually valid but collectively suspect — an `alb` listener ARN that doesn't look like an ELBv2 ARN, or an `s3-sqs` visibility timeout set below the six-times-the-function-timeout floor that keeps a message from being redelivered while it's still being processed. It exits non-zero if anything required is missing, so it slots naturally into a check before deploy.
 
 **Migrating an existing `lambda.env`.** If you have a hand-written `lambda.env` and want to move to the `lambda.yaml` model, `alr-builder generate-yaml` does the one-time conversion: it validates the `lambda.env` first (refusing, with a list, if required values are missing), then writes a minimal `lambda.yaml` containing only the values that differ from their defaults. It won't clobber an existing `lambda.yaml` — remove that first if you mean to regenerate. From that point forward the generate-on-demand flow above takes over, and `lambda.env` becomes the artifact.
+
+**config.mk.** `lambda.env`/`lambda.yaml` hold per-Lambda configuration. Tool-level settings that apply across every project on your machine — which AWS profile to use, a DarkPAN resolver, and so on — don't belong there. `config.mk` is an optional `make` fragment, read before `lambda.env`, for exactly that: `AWS_PROFILE`, `AWS_ACCOUNT`, `RESOLVER`, and similar overrides. `alr-builder install` doesn't create one; if your project was bootstrapped with `CPAN::Maker::Bootstrapper`, a default `config.mk` is already there. Otherwise add it yourself — anything set there is a default that `lambda.env` and the environment can still override.
 
 Which trigger types exist, and the specific fields each one needs in `lambda.yaml`, is the subject of the next section; the consolidated field-by-field schema lives in the reference at the end.
 
@@ -864,13 +893,13 @@ Every configurable field, its `lambda.yaml` path, the `lambda.env` variable it m
 
 | `lambda.yaml` path | Variable | Default | Req. | Applies to |
 |---|---|---|:--:|---|
-| `image.repo` | `REPO_NAME` | `perl-lambda` | | all |
+| `image.repo` | `REPO_NAME` | `$(FUNCTION_NAME)` ‡ | | all |
 | `image.handler` | `HANDLER_CLASS` | — | ✔ | all |
 | `lambda.name` | `FUNCTION_NAME` | `lambda-handler` | | all |
 | `lambda.timeout` | `TIMEOUT` | `30` | | all |
 | `lambda.memory` | `MEMORY` | `128` | | all |
 | `lambda.concurrency` | `CONCURRENCY` | `1` | | all † |
-| `role.name` | `ROLE_NAME` | `lambda-role` | | all |
+| `role.name` | `ROLE_NAME` | `$(FUNCTION_NAME)-role` ‡ | | all |
 | `role.profile` | `ROLE_PROFILE` | — | | all |
 | `trigger.type` | `TRIGGER_TYPE` | — | ✔ | all |
 | `platform_image` | `PLATFORM_IMAGE` | — | | all |
@@ -888,13 +917,15 @@ Every configurable field, its `lambda.yaml` path, the `lambda.env` variable it m
 | `trigger.queue.dlq.retention` | `DLQ_RETENTION` | `1209600` | | s3-sqs |
 | `trigger.queue.partial_batch_response` | `PARTIAL_BATCH_RESPONSE` | `false` | | s3-sqs |
 | `trigger.schedule` | `SCHEDULE_EXPRESSION` | `rate(1 day)` | | eventbridge |
-| `trigger.rule_name` | `RULE_NAME` | `lambda-handler-rule` ‡ | | eventbridge |
+| `trigger.rule_name` | `RULE_NAME` | `$(FUNCTION_NAME)-rule` ‡ | | eventbridge |
 | `trigger.topic_name` | `TOPIC_NAME` | — | ✔ | sns |
 | `trigger.listener_arn` | `LISTENER_ARN` | — | ✔ | alb |
 | `trigger.path` | `ALB_PATH` | `/build` | | alb |
 | `trigger.priority` | `RULE_PRIORITY` | `10` | | alb |
 
 † `concurrency` is currently applied only by the `s3-sqs` pipeline (§12.5).
+
+‡ as of 1.5.0, `REPO_NAME`, `ROLE_NAME`, and `RULE_NAME` default from `FUNCTION_NAME` rather than a fixed string — redeploying an existing project without an explicit override produces new-named resources, not updated ones.
 
 ### 14.3 Build and CLI variables
 
@@ -966,7 +997,7 @@ Section 4.4 deploys a distribution tarball and takes no position on how you buil
 Two companion distributions, by the same author, cover the two ends ALRB doesn't:
 
 - **CPAN::Maker** turns a `buildspec.yml` — a short declaration of your module, its paths, and its dependencies — into a standard CPAN distribution tarball. It is one concrete answer to "your favorite CPAN tool" from Section 4.4: the thing that produces the artifact ALRB consumes.
-- **CPAN::Maker::Bootstrapper** scaffolds a ready-to-build project in one command (`cpan-maker-bootstrapper -m My::Handler`): a project `Makefile`, a `buildspec.yml` pre-filled from your git config, stub sources, supporting makefiles, and an immediate first build. It also *imports* existing code into a distribution and layers on development tooling.
+- **CPAN::Maker::Bootstrapper** scaffolds a ready-to-build project in one command (`bootstrapper -I . -i . MyApp`): a project `Makefile`, a `buildspec.yml` pre-filled from your git config, stub sources, supporting makefiles, and an immediate first build. It also *imports* existing code into a distribution and layers on development tooling.
 
 Together they close a clean three-stage loop: **Bootstrapper** scaffolds or imports → **CPAN::Maker** builds the tarball → **ALRB** deploys it as a Lambda.
 

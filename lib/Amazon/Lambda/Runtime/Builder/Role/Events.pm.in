@@ -52,7 +52,7 @@ sub cmd_eventbridge_describe_rule {
 
   my $rsp = eval { $events->DescribeRule( { Name => $rule_name } ); };
 
-  return $self->_check_response($rsp);
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -65,7 +65,7 @@ sub cmd_eventbridge_put_rule_expression {
   my $rsp
     = eval { return $self->_eventbridge_put_rule( expression => $expression, state => $state, rule_name => $rule_name ); };
 
-  return $self->_check_response($rsp);
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -91,7 +91,7 @@ sub cmd_eventbridge_put_lambda_target {
     }
   );
 
-  return $self->_check_response($rsp);
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -103,7 +103,7 @@ sub cmd_eventbridge_put_rule_pattern {
 
   my $rsp = eval { $self->_eventbridge_put_rule( pattern => $pattern, state => $state, rule_name => $rule_name ); };
 
-  return $self->_check_response($rsp);
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -148,7 +148,7 @@ sub cmd_eventbridge_disable_rule {
 
   if ( !$rsp && $EVAL_ERROR ) {
     print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
+    return $self->_handle_return( $FAILURE, $EVAL_ERROR );
   }
 
   return $self->cmd_eventbridge_describe_rule;
@@ -167,7 +167,7 @@ sub cmd_eventbridge_enable_rule {
 
   if ( !$rsp && $EVAL_ERROR ) {
     print {*STDERR} $EVAL_ERROR;
-    return $FAILURE;
+    return $self->_handle_return( $FAILURE, $EVAL_ERROR );
   }
 
   return $self->cmd_eventbridge_describe_rule;
@@ -184,7 +184,7 @@ sub cmd_eventbridge_remove_targets {
 
   my $rsp = eval { $events->RemoveTargets( { Rule => $rule_name, Ids => [@ids] } ); };
 
-  return $self->_check_response($rsp);
+  return $self->_handle_response($rsp);
 }
 
 ########################################################################
@@ -198,7 +198,7 @@ sub cmd_eventbridge_delete_rule {
 
   my $rsp = eval { $events->DeleteRule( { Name => $rule_name } ); };
 
-  return $self->_check_response($rsp);
+  return $self->_handle_response($rsp);
 }
 
 1;
