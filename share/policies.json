@@ -1,0 +1,101 @@
+{
+    "defaults" : {
+        "s3-direct" :  { "s3" : "ro" },
+        "s3-sqs" :  { "s3" : "ro", "sqs":"ro" }
+    },
+    "trigger_type_map" : {
+        "alb"         : [],
+        "eventbridge" : [],
+        "sns"         : [],
+        "s3-direct"   : [],
+        "s3-sqs"      : ["s3-sqs"]
+    },
+    "policies" : {
+        "execution" : {
+            "basic" : [
+                "service-role/AWSLambdaBasicExecutionRole",
+                "Basic Lambda execution (CloudWatch logging) - required"
+            ],
+            "s3-sqs" : [
+                "service-role/AWSLambdaSQSQueueExecutionRole",
+                "Allow Lambda to read SQS queues"
+            ]
+        },
+        "dynamodb" : {
+            "full" : [
+                "policy/AmazonDynamoDBFullAccess",
+                "DynamoDB Full Access"
+            ],
+            "ro" : [
+                "policy/AmazonDynamoDBReadOnlyAccess",
+                "DynamoDB Read Only Access"
+            ]
+        },
+        "sns" : {
+            "ro" : [
+                "policy/AmazonSNSReadOnlyAccess",
+                "SNS Read Only Access"
+            ],
+            "full" : [
+                "policy/AmazonSNSFullAccess",
+                "SNS Full Access"
+            ]
+        },
+        "kinesis" : {
+            "full" : [
+                "policy/AmazonKinesisFullAccess",
+                "Kinesis Full Access"
+            ],
+            "ro" : [
+                "policy/AmazonKinesisReadOnlyAccess",
+                "Kinesis Read Only Access"
+            ]
+        },
+        "sqs" : {
+            "ro" : [
+                "policy/AmazonSQSReadOnlyAccess",
+                "SQS Read Only Access"
+            ],
+            "full" : [
+                "policy/AmazonSQSFullAccess",
+                "SQS Full Access"
+            ]
+        },
+        "s3" : {
+            "ro" : [
+                "policy/AmazonS3ReadOnlyAccess",
+                "S3 Read Only Access"
+            ],
+            "full" : [
+                "policy/AmazonS3FullAccess",
+                "S3 Full Access"
+            ]
+        },
+        "ssm" : {
+            "full" : [
+                "policy/AmazonSSMReadWrite",
+                "Systems Manager Full Access"
+            ],
+            "ro" : [
+                "policy/AmazonSSMReadOnlyAccess",
+                "Systems Manager Read only Access"
+            ]
+        },
+        "secrets-manager" : {
+            "full" : [
+                "policy/SecretsManagerReadWrite",
+                "Secrets Manager Full Access - create a custom-policies.json for finer grained access"
+            ]
+        },
+        "ecr" : {
+            "ro" : [
+                "policy/AmazonECRReadOnlyAccess",
+                "ECR Read Only Access"
+            ],
+            "full" : [
+                "policy/AmazonECRFullAccess",
+                "ECR Full Access"
+            ]
+        }
+    }
+}

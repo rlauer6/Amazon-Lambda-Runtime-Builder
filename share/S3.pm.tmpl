@@ -5,7 +5,7 @@ package @app_name@::Lambda::Event::S3;
 use strict;
 use warnings;
 
-use Amazon::S3;
+use Amazon::S3::Lite;
 use Amazon::Credentials;
 use Data::Dumper;
 use English qw(-no_match_vars);
@@ -51,9 +51,8 @@ sub on_s3_event {
     )
   );
 
-  my $bucket = get_s3()->bucket($bucket_name);
 
-  my $response = eval { $bucket->get_key($key); };
+  my $response = eval { $self->get_s3->get_obj($bucket_name, $key); };
 
   if ($EVAL_ERROR) {
     $logger->error( sprintf 'failed to read s3://%s/%s: %s', $bucket_name, $key, $EVAL_ERROR );
@@ -62,7 +61,7 @@ sub on_s3_event {
 
   $logger->info( Dumper( [ response => $response ] ) );
 
-  my $obj = $response->{value};
+  my $obj = $response->{content};
 
   my $obj_len = length $obj;
 

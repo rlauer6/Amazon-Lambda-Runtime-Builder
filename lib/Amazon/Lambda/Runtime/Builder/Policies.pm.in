@@ -1,0 +1,519 @@
+package Amazon::Lambda::Runtime::Builder::Policies;
+
+use strict;
+use warnings;
+
+use Carp qw(croak);
+use CLI::Simple::Utils qw(slurp_json file_or_stdout);
+use CLI::Simple::Constants qw(:booleans);
+use English qw(-no_match_vars);
+
+use List::Util qw(none pairs);
+use File::ShareDir qw(dist_file);
+
+__PACKAGE__->follow_best_practice;
+__PACKAGE__->mk_accessors(
+  qw(
+    default_permissions
+    extra_permissions
+    outfile
+    policies
+    policy_enabled
+    trigger_type
+    trigger_type_map
+    valid_extra_permissions
+    valid_trigger_types
+  )
+);
+
+use parent qw(Class::Accessor::Fast Exporter);
+
+########################################################################
+sub new {
+########################################################################
+  my ( $class, @args ) = @_;
+
+  my $options = ref $args[0] ? $args[0] : {@args};
+
+  my %extra_permissions = %{$options};
+
+  foreach (qw(trigger_type outfile)) {
+    delete $extra_permissions{$_};
+  }
+
+  $options->{extra_permissions} = \%extra_permissions;
+
+  my $self = $class->SUPER::new($options);
+
+  my $trigger_type = $self->get_trigger_type;
+
+  croak "ERROR: trigger-type is a required argument\n"
+    if !$trigger_type;
+
+  $self->init;
+
+  my @valid_trigger_types = keys %{ $self->get_trigger_type_map };
+  $self->set_valid_trigger_types( \@valid_trigger_types );
+
+  croak sprintf "ERROR: invalid trigger type - must be one of %s\n", join q{,}, @valid_trigger_types
+    if none { $_ eq $trigger_type } @valid_trigger_types;
+
+  return $self;
+}
+
+########################################################################
+sub _fetch_policies {
+########################################################################
+  my $policies_file = dist_file( 'Amazon-Lambda-Runtime-Builder', 'policies.json' );
+
+  return slurp_json($policies_file);
+}
+
+########################################################################
+sub valid_services {
+########################################################################
+  my ($self) = @_;
+
+  my $meta = $self->_fetch_policies;
+
+  return grep { $_ ne 'execution' } keys %{ $meta->{policies} };
+}
+
+########################################################################
+sub _init_policies {
+########################################################################
+  my ($self) = @_;
+
+  my $policies_file = dist_file( 'Amazon-Lambda-Runtime-Builder', 'policies.json' );
+
+  my $policy_meta = $self->_fetch_policies;
+
+  my $defaults = $policy_meta->{defaults} // {};
+
+  if ( -e 'policies.json' ) {
+    my $custom_meta = slurp_json('policies.json');
+
+    foreach my $trigger_type ( keys %{ $custom_meta->{defaults} // {} } ) {
+      $defaults->{$trigger_type} = { %{ $defaults->{$trigger_type} // {} }, %{ $custom_meta->{defaults}{$trigger_type} }, };
+    }
+  }
+
+  $self->set_default_permissions($defaults);
+
+  $self->set_policies( $policy_meta->{policies} );
+
+  $self->set_trigger_type_map( $policy_meta->{trigger_type_map} );
+
+  return;
+}
+
+########################################################################
+sub init {
+########################################################################
+  my ($self) = @_;
+
+  $self->_init_policies;
+  my $policies = $self->get_policies;
+
+  my $valid_extra_permissions = [ sort grep { $_ ne 'execution' } keys %{$policies} ];
+  $self->set_valid_extra_permissions($valid_extra_permissions);
+
+  my $enabled = { execution => { basic => $TRUE } };
+
+  $self->set_policy_enabled($enabled);
+
+  for my $category ( keys %{$policies} ) {
+    next if $category eq 'execution';
+    $enabled->{$category} = { map { $_ => $FALSE } keys %{ $policies->{$category} } };
+  }
+
+  for my $key ( keys %{ $policies->{execution} } ) {
+    $enabled->{execution}{$key} //= $FALSE;
+  }
+
+  my $trigger_type = $self->get_trigger_type;
+
+  my $defaults = $self->get_default_permissions;
+
+  if ( my $services = $defaults->{$trigger_type} ) {
+    foreach my $s ( keys %{$services} ) {
+      my ($access_type) = $defaults->{$trigger_type}->{$s};
+
+      croak sprintf "ERROR: %s does not provide %s access\n", $s, $access_type
+        if !exists $enabled->{$s}{$access_type};
+
+      $enabled->{$s}{$access_type} = $TRUE;
+    }
+  }
+
+  foreach my $p ( pairs %{ $self->get_extra_permissions // {} } ) {
+    my ( $r, $rw ) = @{$p};
+
+    croak sprintf "ERROR: invalid option %s, must be one of %s\n", $r, join q{,}, @{$valid_extra_permissions}
+      if none { $r eq $_ } @{$valid_extra_permissions};
+
+    $rw = $rw ? 'full' : 'ro';
+
+    croak sprintf "ERROR: %s does not provide %s access\n", $r, $rw
+      if !exists $enabled->{$r}{$rw};
+
+    $enabled->{$r}->{$rw} = $TRUE;
+  }
+
+  my $trigger_type_map = $self->get_trigger_type_map;
+
+  for my $req ( @{ $trigger_type_map->{$trigger_type} // [] } ) {
+    if ( exists $policies->{execution}->{$req} ) {
+      $enabled->{execution}->{$req} = $TRUE;
+    }
+  }
+
+  return;
+}
+
+########################################################################
+sub write_policies {
+########################################################################
+  my ( $self, $outfile ) = @_;
+
+  my $policies = $self->get_policies;
+
+  my $enabled = $self->get_policy_enabled;
+
+  $outfile //= $self->get_outfile;
+
+  my $fh = eval { $self->file_or_stdout( $outfile, 'w' ); };
+
+  croak "ERROR: Could not file $outfile for writing\n$OS_ERROR"
+    if !$fh;
+
+  print {$fh} sprintf "# Autogenerated on %s - edit with caution (it may be regenerated)\n\n", scalar localtime;
+
+  foreach my $p ( 'execution', @{ $self->get_valid_extra_permissions } ) {
+    foreach my $r ( sort keys %{ $policies->{$p} } ) {
+      if ( $policies->{$p}->{$r}->[1] ) {
+        print {$fh} sprintf "# %s\n", $policies->{$p}->{$r}->[1];
+      }
+
+      print {$fh} sprintf "%s\n%s",
+        $self->_arn( $policies->{$p}->{$r}->[0], $enabled->{$p}->{$r} ), $enabled->{$p}->{$r} ? "\n" : q{};
+    }
+  }
+
+  return;
+}
+
+########################################################################
+sub _arn {
+########################################################################
+  my ( $self, $policy, $enabled ) = @_;
+
+  return sprintf '%sarn:aws:iam::aws:%s', $enabled ? q{} : q{#}, $policy;
+}
+
+1;
+
+__END__
+
+=pod
+
+=encoding utf8
+
+=head1 NAME
+
+Amazon::Lambda::Runtime::Builder::Policies - generates the C<policies>
+file for a Lambda project's IAM execution role
+
+=head1 SYNOPSIS
+
+  use Amazon::Lambda::Runtime::Builder::Policies;
+
+  # Print a policies file for an s3-sqs trigger, using whatever
+  # policies.json says s3-sqs defaults to
+  my $policies = Amazon::Lambda::Runtime::Builder::Policies->new(
+    trigger_type => 's3-sqs',
+  );
+
+  $policies->write_policies;
+
+  # Write to a file instead of STDOUT, and layer on full DynamoDB access
+  Amazon::Lambda::Runtime::Builder::Policies->new(
+    trigger_type => 's3-direct',
+    outfile      => 'policies',
+    dynamodb     => 1,
+  )->write_policies;
+
+=head1 DESCRIPTION
+
+C<Amazon::Lambda::Runtime::Builder::Policies> decides which AWS managed
+IAM policy ARNs belong in a Lambda project's C<policies> file and writes
+that file - active lines uncommented, inactive lines commented out - so
+the file is ready to hand to the framework's role-creation step (C<make
+lambda-role>) without further editing, or ready for a human to hand-edit
+from a sensible, trigger-aware starting point.
+
+Three things determine what ends up enabled:
+
+=over 4
+
+=item * B<The trigger type's execution-role requirement.> Every trigger
+gets the basic Lambda execution policy (CloudWatch logging). Some
+trigger types additionally require a specific execution-role permission
+for the trigger mechanism itself to function - for example, C<s3-sqs>
+requires C<AWSLambdaSQSQueueExecutionRole> so the function's execution
+role is allowed to poll the queue. This is not optional or a matter of
+taste: without it, the event source mapping cannot deliver messages.
+Which trigger types require which execution-role permissions is data,
+not code - see L</THE policies.json FILE>.
+
+=item * B<The trigger type's default data-access grant.> Most trigger
+types are commonly paired with one or two AWS service categories a
+handler is likely to need - an C<s3-direct> handler almost always reads
+the object that triggered it, for instance. C<policies.json>'s
+C<defaults> section encodes these as a convenience, each with its access
+level (C<ro> or C<full>) baked in; there is no separate flag to adjust
+the level of a default at construction time - to get a different level,
+override it explicitly (see next).
+
+=item * B<Extra permissions.> Any additional AWS service category a
+handler depends on - independent of what triggers it, and independent of
+whatever C<defaults> already grants - can be layered on by passing extra
+named arguments to the constructor, each set to a true (full access) or
+false (read-only access) value. A handler triggered by C<s3-sqs> that
+also needs to write to DynamoDB, for instance, would pass
+C<< dynamodb => 1 >>. An extra permission adds to whatever a default
+already enabled for that category rather than replacing it - if
+C<defaults> already turned on C<ro> for a category and an extra
+permission turns on C<full> for the same category, both end up
+uncommented in the generated file (harmless, since C<full> is a superset
+of C<ro>, but worth knowing there's currently no way to turn a default
+back I<off> short of hand-editing the generated file).
+
+=back
+
+Everything this module knows about - the catalog of available policies,
+their descriptions, which trigger types require which execution-role
+permission, and which trigger types default to which data-access
+categories - is loaded from C<policies.json>, a file shipped with this
+distribution. Nothing about the set of valid trigger types or available
+policy categories is hard-coded in this module; both are derived from
+that file at construction time. Supporting a new trigger type, or adding
+a new policy category or default, is a matter of updating
+C<policies.json> and shipping it with a new release - no code changes
+required here.
+
+A project can also extend or override the shipped defaults with its own
+C<policies.json> in the current directory - see L</defaults> below.
+
+=head1 CONSTRUCTOR
+
+=head2 new
+
+  Amazon::Lambda::Runtime::Builder::Policies->new(
+    trigger_type => $trigger_type,
+    outfile      => $path,
+    %extra_permissions,
+  );
+
+Reads C<policies.json> from this distribution's share directory (merging
+in a project-local C<policies.json>, if one exists in the current
+directory - see L</defaults>), then builds the enabled/disabled state for
+every policy category based on the arguments given.
+
+=over 4
+
+=item * C<trigger_type> - required. Must be one of the keys of
+C<policies.json>'s C<trigger_type_map> (see L</THE policies.json FILE>);
+an unrecognized value raises an exception. There is no fixed list of
+valid trigger types in this module - it's whatever C<policies.json>
+declares.
+
+=item * C<outfile> - optional. If given, C<write_policies> writes to
+this path instead of C<STDOUT>.
+
+=item * Anything else passed to the constructor is treated as an extra
+permission: a policy category name (e.g. C<ssm>, C<ecr>, C<dynamodb>,
+C<kinesis>, C<secrets-manager>) mapped to a true (full access) or false
+(read-only access) value. An unrecognized category name raises an
+exception, as does naming a category/level combination that
+C<policies.json> doesn't define - C<secrets-manager>, for example, has
+no C<ro> entry, since AWS doesn't publish a read-only managed policy for
+Secrets Manager (see L</policies>). The category name must match a
+top-level key of C<policies.json>'s C<policies> block other than
+C<execution> - see L</THE policies.json FILE>.
+
+=back
+
+Croaks if C<trigger_type> is missing, if C<trigger_type> isn't a
+recognized trigger type, or if any extra-permission key or level isn't
+one C<policies.json> actually defines.
+
+=head1 METHODS
+
+=head2 write_policies
+
+  $policies->write_policies;
+  $policies->write_policies($path);
+
+Writes the generated C<policies> file - to C<$path> if given, otherwise
+to C<outfile> if one was passed to the constructor, otherwise to
+C<STDOUT>. The file begins with a timestamped autogenerated-file
+comment, then one block per policy category (C<execution> first, then
+every other category in alphabetical order). Within each category,
+entries are listed alphabetically by key (C<full> before C<ro>). Each
+ARN is preceded by a comment line naming the policy, and is left
+commented out (C<#>) unless enabled by the trigger type's defaults or
+the constructor's extra-permission arguments.
+
+=head1 ACCESSORS
+
+Read-only after construction: C<trigger_type>, C<extra_permissions> (the
+hashref of extra-permission arguments passed to the constructor),
+C<outfile>, C<policies> (the C<policies> block loaded from
+C<policies.json>), C<trigger_type_map> (the corresponding
+C<trigger_type_map> block), C<default_permissions> (the merged
+C<defaults> block - shipped defaults with any project-local overrides
+already applied), C<valid_trigger_types> (the trigger types
+C<policies.json> declares), C<valid_extra_permissions> (the policy
+categories that may be used as extra permissions), and
+C<policy_enabled> (the full computed enabled/disabled state, keyed the
+same way as C<policies>).
+
+=head1 THE policies.json FILE
+
+C<policies.json>, shipped in this distribution's share directory, has
+three top-level keys:
+
+=head2 policies
+
+A hash of policy categories. C<execution> is special - its values are
+managed policies for the Lambda execution role itself, keyed by name
+(C<basic>, and one entry per trigger type that needs its own execution
+permission, e.g. C<s3-sqs>). Every other category represents a
+data-access dependency (C<s3>, C<sqs>, C<sns>, C<ssm>,
+C<secrets-manager>, C<ecr>, C<dynamodb>, C<kinesis>, and so on) - these
+are named for the AWS service, independent of any trigger type, since a
+handler's dependencies aren't necessarily the same service as what
+triggers it. Most categories have exactly two entries, C<ro> and
+C<full>; a category may have only one if AWS doesn't publish both levels
+as managed policies - C<secrets-manager> currently has only C<full>,
+since there is no AWS-managed read-only Secrets Manager policy. Every
+entry, in every category, is a two-element array: the ARN suffix
+(everything after C<arn:aws:iam::aws:>) and a short human-readable
+description used as the comment line above it in the generated file.
+
+  "policies" : {
+    "execution" : {
+      "basic"  : [ "service-role/AWSLambdaBasicExecutionRole", "Basic Lambda execution (CloudWatch logging) - required" ],
+      "s3-sqs" : [ "service-role/AWSLambdaSQSQueueExecutionRole", "Allow Lambda to read SQS queues" ]
+    },
+    "s3" : {
+      "ro"   : [ "policy/AmazonS3ReadOnlyAccess", "S3 Read Only Access" ],
+      "full" : [ "policy/AmazonS3FullAccess", "S3 Full Access" ]
+    },
+    "secrets-manager" : {
+      "full" : [ "policy/SecretsManagerReadWrite", "Secrets Manager Full Access - create a custom-policies.json for finer grained access" ]
+    }
+  }
+
+=head2 trigger_type_map
+
+A hash whose keys are every valid trigger type - this is where
+C<valid_trigger_types> comes from - and whose values are arrays of
+C<execution> category keys that trigger type requires beyond C<basic>.
+Most trigger types require nothing beyond the basic execution policy and
+so map to an empty array; C<s3-sqs> is the one exception today, mapping
+to C<["s3-sqs"]> so that C<AWSLambdaSQSQueueExecutionRole> is
+automatically enabled whenever C<trigger_type> is C<s3-sqs>.
+
+  "trigger_type_map" : {
+    "alb"         : [],
+    "eventbridge" : [],
+    "sns"         : [],
+    "s3-direct"   : [],
+    "s3-sqs"      : ["s3-sqs"]
+  }
+
+A trigger type's name and its required execution-role key are not
+assumed to be the same string, even though they happen to match for
+C<s3-sqs> today - the mapping is explicit so that a future trigger type
+can require an execution permission under a different name, or more than
+one, without any change to this module. Note that trigger type names
+(C<s3-direct>, C<s3-sqs>) and policy category names (C<s3>, C<sqs>) are
+deliberately different vocabularies - a trigger type describes how a
+function is invoked; a policy category describes an AWS service a
+handler depends on. They're related, not identical: an C<s3-sqs>
+handler's dependency on SQS has nothing to do with I<what> triggers it.
+
+=head2 defaults
+
+A hash whose keys are trigger types and whose values are hashes of
+C<{ category => level }>, naming the policy categories (and their access
+level) that trigger type is commonly paired with. These are the
+"convenience" grants described in L</DESCRIPTION> - not structural
+requirements like C<trigger_type_map>, just reasonable starting points a
+project can accept, extend, or override.
+
+  "defaults" : {
+    "s3-direct" : { "s3" : "ro" },
+    "s3-sqs"    : { "s3" : "ro", "sqs" : "ro" }
+  }
+
+A project can supply its own C<policies.json> in the current directory
+to extend or override these. Only C<defaults> is read from a local file
+- C<policies> and C<trigger_type_map> in a project-local file are
+ignored, since those describe framework capability, not per-project
+preference. The merge happens per trigger type, per category: a local
+file only needs to state what it's adding or changing, and anything it
+doesn't mention still comes from the shipped defaults. For example, a
+project whose handlers routinely need Secrets Manager access could add,
+in its own C<policies.json>:
+
+  {
+    "defaults" : {
+      "s3-sqs" : { "secrets-manager" : "full" }
+    }
+  }
+
+which adds C<secrets-manager> to C<s3-sqs>'s existing defaults (C<s3> and
+C<sqs> stay in effect) without needing to restate them, and without
+touching the shipped catalog at all.
+
+=head1 EXAMPLES
+
+An C<sns>-triggered handler using its default SNS access, plus read-only
+DynamoDB:
+
+  Amazon::Lambda::Runtime::Builder::Policies->new(
+    trigger_type => 'sns',
+    dynamodb     => 0,
+  )->write_policies;
+
+An C<s3-sqs>-triggered handler using only its defaults - no extra
+permissions - written straight to the project's C<policies> file:
+
+  Amazon::Lambda::Runtime::Builder::Policies->new(
+    trigger_type => 's3-sqs',
+    outfile      => 'policies',
+  )->write_policies;
+
+=head1 SEE ALSO
+
+L<Amazon::Lambda::Runtime::Builder> - the C<alr-builder> CLI, whose
+C<install> command is the primary caller of this module
+
+L<Amazon::Lambda::Runtime::Builder::Role::Install> - generates the rest
+of a project's scaffold alongside the C<policies> file this module
+produces
+
+=head1 AUTHOR
+
+Rob Lauer - E<lt>rlauer@treasurersbriefcase.comE<gt>
+
+=head1 LICENSE
+
+(c) Copyright 2019-2026 Robert C. Lauer. All rights reserved. This
+module is free software. It may be used, redistributed and/or modified
+under the same terms as Perl itself.
+
+=cut

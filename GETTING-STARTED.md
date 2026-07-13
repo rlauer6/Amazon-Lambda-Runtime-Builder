@@ -138,7 +138,24 @@ ALRB orchestrates other tools rather than replacing them, so a short list of thi
 
 **`make`.** GNU `make` drives the whole pipeline. Any reasonably current version is fine.
 
-**AWS credentials the tools can find.** This is the one prerequisite worth a second sentence for a reader who lives more in Perl than in AWS. ALRB doesn't take a key and secret as arguments; it looks for credentials the way every AWS tool does, in a fixed order — a shared credentials file (`~/.aws/credentials`, optionally selected by profile), then environment variables (`AWS_ACCESS_KEY_ID` and friends), then, when running on AWS infrastructure, an instance or container role. Any one of those is enough. If you've used the `aws` CLI from this machine, you already have the first; if not, the shortest path is to create the shared file with an access key for an IAM user, or export the environment variables for the shell you'll build from. You'll also want a default region (ALRB assumes `us-east-1` if you don't set one). What those credentials are *permitted to do* is a separate question — the build-and-deploy path needs a specific set of permissions — and Section 11 covers that in full; for now, credentials that resolve are enough to proceed, and the check below will tell you whether they carry the permissions you'll need.
+**AWS credentials the tools can find.** This is the one prerequisite
+worth a second sentence for a reader who lives more in Perl than in
+AWS. ALRB doesn't take a key and secret as arguments; it looks for
+credentials the way every AWS tool does, in a fixed order — a shared
+credentials file (`~/.aws/credentials`, optionally selected by
+profile), then environment variables (`AWS_ACCESS_KEY_ID` and
+friends), then, when running on AWS infrastructure, an instance or
+container role. Any one of those is enough. If you've used the `aws`
+CLI from this machine, you already have the first; if not, the
+shortest path is to create the shared file with an access key for an
+IAM user, or export the environment variables for the shell you'll
+build from. You'll also want a default region (ALRB assumes
+`us-east-1` if you don't set one). What those credentials are
+*permitted to do* is a separate question — the build-and-deploy path
+needs a specific set of permissions — and Section 11 covers that in
+full; for now, credentials that resolve are enough to proceed, and the
+check below will tell you whether they carry the permissions you'll
+need.
 
 **Install the framework:**
 
@@ -146,13 +163,12 @@ ALRB orchestrates other tools rather than replacing them, so a short list of thi
 cpm install -g Amazon::Lambda::Runtime::Builder
 ```
 
-(or `cpanm Amazon::Lambda::Runtime::Builder` — either works). This gives you the two CLIs the guide uses, `alr-builder` and `alr-helper`, and the shared build machinery they read at deploy time.
+(or `cpanm Amazon::Lambda::Runtime::Builder` — either works). This
+gives you the two CLIs the guide uses, `alr-builder` and `alr-helper`,
+and the shared build machinery they read at deploy time.
 
-**Optionally, install the permission-check modules.** ALRB can confirm your credentials actually carry the permissions to build and deploy, but that check is only active if three modules are present — `Amazon::API::IAM`, `Amazon::API::STS`, and `Amazon::Credentials`. They aren't hard dependencies (the framework runs fine without them), so install them only if you want the check:
-
-```
-cpm install -g Amazon::API::IAM Amazon::API::STS Amazon::Credentials
-```
+ALRB can confirm your credentials actually carry the permissions to
+build and deploy.
 
 **Confirm your environment:**
 
@@ -160,40 +176,73 @@ cpm install -g Amazon::API::IAM Amazon::API::STS Amazon::Credentials
 alr-builder check
 ```
 
-This verifies the required tools are on your `PATH` (`docker` and `make`; `curl` is checked as optional) and, if the three modules above are installed, simulates the IAM permissions the full workflow needs against your current identity and reports anything missing. Run it now, before you invest time in a build: a green result means the rest of the guide should proceed without environment surprises, and a red one points at exactly the tool or permission to fix first. If the permission modules aren't installed, `check` still validates your tools and simply notes that it can't assess IAM — you can proceed, but you'll discover any permission gaps later, mid-deploy, rather than up front.
+This verifies the required tools are on your `PATH` (`docker` and
+`make`; `curl` is checked as optional), simulates the IAM permissions
+the full workflow needs against your current identity and reports
+anything missing. Run it now, before you invest time in a build: a
+green result means the rest of the guide should proceed without
+environment surprises, and a red one points at exactly the tool or
+permission to fix first.
 
-With tools, credentials, and the framework in place, you're ready to build something. The next section is the one to follow without skipping: scaffold, write a handler, configure, build, deploy, invoke, and tear down — one unbroken pass.
+With tools, credentials, and the framework in place, you're ready to
+build something. The next section is the one to follow without
+skipping: scaffold, write a handler, configure, build, deploy, invoke,
+and tear down — one unbroken pass.
 
 ## 4. Your first Lambda
 
-This is the section to follow straight through. By the end you'll have a Perl function deployed to your own account, invoked, confirmed in the logs, and torn back down. It uses the `eventbridge` trigger — the serverless form of a cron job — because it's the fewest moving parts: no bucket, no queue, no topic, just a schedule.
+This is the section to follow straight through. By the end you'll have
+a Perl function deployed to your own account, invoked, confirmed in
+the logs, and torn back down. It uses the `eventbridge` trigger — the
+serverless form of a cron job — because it's the fewest moving parts:
+no bucket, no queue, no topic, just a schedule.
 
 ### 4.1 Scaffold the project
 
-Create a directory and scaffold into it:
+Create a directory and insatall the scaffold into it:
 
 ```
 alr-builder install HelloLambda --install-dir hello-lambda
 cd hello-lambda
 ```
 
-No trigger type was given, so it defaults to `eventbridge` — the one this walkthrough uses.
+No trigger type was given, so it defaults to `eventbridge` — the one
+this walkthrough uses.
 
-A handful of files land, and it's worth knowing what each is before you touch them:
+A handful of files land, and it's worth knowing what each is before
+you touch them:
 
-- **`lib/HelloLambda/Lambda/Handler.pm`** — your handler class. It already registers the `eventbridge` trigger (the one you asked for); the registration lines for the other four trigger types are present but commented out, so switching or adding a trigger later is a one-line edit rather than a re-scaffold.
-- **`lib/HelloLambda/Lambda/Event/EventBridge.pm`** — the event module for your trigger, with a working `on_event` that logs the event and its detail. This is what you'll edit in the next step.
-- **`lib/HelloLambda/Lambda/Event/{SQS,SNS,S3,ALB}.pm`** — the same for the other four trigger types, generated but unregistered. Ignore them for now; they cost nothing sitting unused.
-- **`lambda.yaml`** — already has `image.handler` and `trigger.type` filled in for you, copied from the `eventbridge` reference config. You'll add one value to it in 4.3.
-- **`policies`** — the AWS managed-policy ARNs attached to your function's execution role. The default entry grants CloudWatch logging, which is all this function needs.
+- **`lib/HelloLambda/Lambda/Handler.pm`** — your handler class. It
+  already registers the `eventbridge` trigger (the one you asked for);
+  the registration lines for the other four trigger types are present
+  but commented out, so switching or adding a trigger later is a
+  one-line edit rather than a re-scaffold.
+- **`lib/HelloLambda/Lambda/Event/EventBridge.pm`** — the event module
+  for your trigger, with a working `on_event` that logs the event and
+  its detail. This is what you'll edit in the next step.
+- **`lib/HelloLambda/Lambda/Event/{SQS,SNS,S3,ALB}.pm`** — the same
+  for the other four trigger types, generated but unregistered. Ignore
+  them for now; they cost nothing sitting unused.
+- **`lambda.yaml`** — already has `image.handler` and `trigger.type`
+  filled in for you, copied from the `eventbridge` reference
+  config. You'll add one value to it in 4.3.
+- **`policies`** — the AWS managed-policy ARNs attached to your
+  function's execution role. The default entry grants CloudWatch
+  logging, which is all this function needs.
 - **`Makefile.builder`** — the build engine. You don't edit it; it pulls in the framework's machinery from the installed distribution.
-- **`project.mk`** — the file your own `Makefile` includes to expose the `make` targets you'll run. (If you already had a `project.mk`, ALRB appends its section and leaves a `.bak` backup.)
+- **`project.mk`** — the file your own `Makefile` includes to expose
+  the `make` targets you'll run. (If you already had a `project.mk`,
+  ALRB appends its section and leaves a `.bak` backup.)
 
-Notably absent: no Dockerfile, no per-trigger makefiles. Those live in the framework and are read at build time — there's nothing project-local to maintain.
+Notably absent: no Dockerfile, no per-trigger makefiles. Those live in
+the framework and are read at build time — there's nothing
+project-local to maintain.
 
 ### 4.2 Write a trivial handler
 
-Open `lib/HelloLambda/Lambda/Event/EventBridge.pm`. It already does something reasonable — logs the event's detail-type, source, and payload:
+Open `lib/HelloLambda/Lambda/Event/EventBridge.pm`. It already does
+something reasonable — logs the event's detail-type, source, and
+payload:
 
 ```perl
 package HelloLambda::Lambda::Event::EventBridge;
@@ -217,7 +266,8 @@ sub on_event {
 1;
 ```
 
-For a first function, trim that down to the smallest thing that proves the loop works — a single greeting line:
+For a first function, trim that down to the smallest thing that proves
+the loop works — a single greeting line:
 
 ```perl
 sub on_event {
@@ -231,13 +281,22 @@ sub on_event {
 }
 ```
 
-You didn't have to write `HelloLambda::Lambda::Handler` at all — `install` already generated it, already registered against the trigger you chose. That's the whole handler contract for now; Section 6 covers the rest of it.
+You didn't have to write `HelloLambda::Lambda::Handler` at all —
+`install` already generated it, already registered against the trigger
+you chose. That's the whole handler contract for now; Section 6 covers
+the rest of it.
 
-Keeping the handler to a single event type isn't just tidiness — every `use` in this file becomes a dependency baked into the image, so a focused handler is a leaner container. That thread runs through the whole framework and gets its own section (9).
+Keeping the handler to a single event type isn't just tidiness — every
+`use` in this file becomes a dependency baked into the image, so a
+focused handler is a leaner container. That thread runs through the
+whole framework and gets its own section (9).
 
 ### 4.3 Configure it
 
-`lambda.yaml` already has what it needs to deploy — `image.handler: 'HelloLambda::Lambda::Handler'` and `trigger.type: eventbridge` were written by `install`. Add one thing, a fast schedule so you don't wait a full day to see it fire on its own:
+`lambda.yaml` already has what it needs to deploy — `image.handler:
+'HelloLambda::Lambda::Handler'` and `trigger.type: eventbridge` were
+written by `install`. Add one thing, a fast schedule so you don't wait
+a full day to see it fire on its own:
 
 ```yaml
 image:
@@ -249,9 +308,15 @@ trigger:
   schedule: rate(1 minute)
 ```
 
-(`lambda.name` isn't required — omit it and the function is named `lambda-handler` — but naming it here keeps the CloudWatch log group and later commands easy to recognize.)
+(`lambda.name` isn't required — omit it and the function is named
+`lambda-handler` — but naming it here keeps the CloudWatch log group
+and later commands easy to recognize.)
 
-Only two values are strictly required — `handler` (which handler class the container loads) and `trigger.type` — and everything else here is just to make the demo concrete: a function name, and a one-minute schedule so you don't wait long to see it fire. You can confirm what's set versus defaulted at any time:
+Only two values are strictly required — `handler` (which handler class
+the container loads) and `trigger.type` — and everything else here is
+just to make the demo concrete: a function name, and a one-minute
+schedule so you don't wait long to see it fire. You can confirm what's
+set versus defaulted at any time:
 
 ```
 alr-builder check-env-file
@@ -261,11 +326,22 @@ Section 7 covers the `lambda.yaml`/`lambda.env` model in full; for now this is e
 
 ### 4.4 Build a distribution tarball
 
-ALRB deploys a *standard CPAN distribution* — it does not care how you produce one. The contract is simple: build a distribution whose primary module is your handler class (so `HelloLambda::Lambda::Handler` installs as `lib/HelloLambda/Lambda/Handler.pm`), and leave the resulting `*.tar.gz` in the project directory. ALRB picks up the newest tarball whose name matches the distribution and reads its `META.json` to learn the distribution name and the prerequisites to install into the image.
+ALRB deploys a *standard CPAN distribution* — it does not care how you
+produce one. The contract is simple: build a distribution whose
+primary module is your handler class (so
+`HelloLambda::Lambda::Handler` installs as
+`lib/HelloLambda/Lambda/Handler.pm`), and leave the resulting
+`*.tar.gz` in the project directory. ALRB picks up the newest tarball
+whose name matches the distribution and reads its `META.json` to learn
+the distribution name and the prerequisites to install into the image.
 
-Use whatever you already use — `ExtUtils::MakeMaker` and `make dist`, `Dist::Zilla`, `Minilla`, or anything else that emits a conventional tarball. If you'd like a packaging path that dovetails with ALRB (and shares its minimal-dependency lineage), see **Appendix B**.
+Use whatever you already use — `ExtUtils::MakeMaker` and `make dist`,
+`Dist::Zilla`, `Minilla`, or anything else that emits a conventional
+tarball. If you'd like a packaging path that dovetails with ALRB (and
+shares its minimal-dependency lineage), see **Appendix B**.
 
-Once built, you should have something like `hello-lambda-1.0.0.tar.gz` sitting alongside `lambda.yaml`.
+Once built, you should have something like `hello-lambda-1.0.0.tar.gz`
+sitting alongside `lambda.yaml`.
 
 ### 4.5 Deploy and invoke
 
@@ -275,7 +351,8 @@ One command provisions everything for the configured trigger type:
 alr-builder build-lambda
 ```
 
-Instead of raw `make`/`docker` output scrolling past, you get a live, structured progress stream:
+Instead of raw `make`/`docker` output scrolling past, you get a live,
+structured progress stream:
 
 ```
 • image...
@@ -291,7 +368,14 @@ Instead of raw `make`/`docker` output scrolling past, you get a live, structured
 build-lambda complete in 14.7s
 ```
 
-That's the same chain from Section 2 — build the image (installing your distribution with `cpm`), push to ECR, create the execution role and attach the policy, create the function, set its log-group retention, and wire the EventBridge schedule — just rendered legibly instead of dumped as raw `docker`/`aws` output. The full log is saved if you need it (Section 5 covers where). Every step is still idempotent — if anything fails partway, fix it and run the same command again; it resumes where it left off.
+That's the same chain from Section 2 — build the image (installing
+your distribution with `cpm`), push to ECR, create the execution role
+and attach the policy, create the function, set its log-group
+retention, and wire the EventBridge schedule — just rendered legibly
+instead of dumped as raw `docker`/`aws` output. The full log is saved
+if you need it (Section 5 covers where). Every step is still
+idempotent — if anything fails partway, fix it and run the same
+command again; it resumes where it left off.
 
 To invoke the function directly, without waiting for the schedule:
 
@@ -299,9 +383,21 @@ To invoke the function directly, without waiting for the schedule:
 make invoke
 ```
 
-`make invoke` sends the function a sample event matching your trigger type — for `eventbridge`, an EventBridge-shaped event that reaches `on_event` — so there's nothing to hand-write. (If you want to send your own, drop a `payload-eventbridge.json` in the project or pass `PAYLOAD=your-file.json`.)
+`make invoke` sends the function a sample event matching your trigger
+type — for `eventbridge`, an EventBridge-shaped event that reaches
+`on_event` — so there's nothing to hand-write. (If you want to send
+your own, drop a `payload-eventbridge.json` in the project or pass
+`PAYLOAD=your-file.json`.)
 
-A clean return with no error is your first success: the function is live and your handler ran. The greeting itself goes to the function's logs rather than the invoke response, so to *see* it, look at the CloudWatch log group `/aws/lambda/hello-lambda` — in the AWS console, or with `aws logs tail /aws/lambda/hello-lambda --follow`. And because you wired a one-minute schedule, the function is now also invoking itself; give it a minute and you'll see the same line appear on its own. That is the trigger doing its job — the cron daemon you didn't have to run.
+A clean return with no error is your first success: the function is
+live and your handler ran. The greeting itself goes to the function's
+logs rather than the invoke response, so to *see* it, look at the
+CloudWatch log group `/aws/lambda/hello-lambda` — in the AWS console,
+or with `aws logs tail /aws/lambda/hello-lambda --follow`. And because
+you wired a one-minute schedule, the function is now also invoking
+itself; give it a minute and you'll see the same line appear on its
+own. That is the trigger doing its job — the cron daemon you didn't
+have to run.
 
 ### 4.6 Tear it down
 
@@ -311,31 +407,104 @@ Because the schedule is live, leave nothing running once you've seen it work:
 alr-builder teardown-lambda
 ```
 
-This disables and deletes the EventBridge rule, deletes the function, detaches policies and deletes the role, removes the ECR repository, and deletes the log group — the exact inverse of the pipeline, rendered the same way `build-lambda` was. You can rebuild the whole thing at any time by running `alr-builder build-lambda` again.
+This disables and deletes the EventBridge rule, deletes the function,
+detaches policies and deletes the role, removes the ECR repository,
+and deletes the log group — the exact inverse of the pipeline,
+rendered the same way `build-lambda` was. You can rebuild the whole
+thing at any time by running `alr-builder build-lambda` again.
 
-That's the full loop: scaffold, handle, configure, build, deploy, invoke, tear down. The next section walks back through what just happened, so the machinery stops being a black box.
+That's the full loop: scaffold, handle, configure, build, deploy,
+invoke, tear down. The next section walks back through what just
+happened, so the machinery stops being a black box.
 
 ## 5. What just happened
 
-`alr-builder build-lambda` ran a dozen steps in a few seconds and showed you each one as it completed, instead of a scroll of raw `docker`/`aws` output. None of it was magic, and none of it is hidden even though it's now compact — the full `make`/`docker` output is still captured, just to a log file rather than your terminal (Section 12 covers where). Here's the same sequence at walking pace, because understanding it once is what turns the pipeline from something you trust into something you can *drive*.
+`alr-builder build-lambda` ran a dozen steps in a few seconds and
+showed you each one as it completed, instead of a scroll of raw
+`docker`/`aws` output. None of it was magic, and none of it is hidden
+even though it's now compact — the full `make`/`docker` output is
+still captured, just to a log file rather than your terminal (Section
+12 covers where). Here's the same sequence at walking pace, because
+understanding it once is what turns the pipeline from something you
+trust into something you can *drive*.
 
-1. **The image was built.** First the framework validated your tarball actually contains the handler you named (`lib/HelloLambda/Lambda/Handler.pm`) — a fast failure now beats a broken container later. Then it read your distribution's `META.json`, generated a `cpanfile` from its prerequisites on the fly, and ran `docker build`: starting from the `perl-lambda-base` image (interpreter, bootstrap, runtime driver already in place), it installed your distribution and its dependencies with `cpm` on top. Your handler's `use` lines are exactly what got installed here — the whole of what makes this image bigger than the base.
+1. **The image was built.** First the framework validated your tarball
+   actually contains the handler you named
+   (`lib/HelloLambda/Lambda/Handler.pm`) — a fast failure now beats a
+   broken container later. Then it read your distribution's
+   `META.json`, generated a `cpanfile` from its prerequisites on the
+   fly, and ran `docker build`: starting from the `perl-lambda-base`
+   image (interpreter, bootstrap, runtime driver already in place), it
+   installed your distribution and its dependencies with `cpm` on
+   top. Your handler's `use` lines are exactly what got installed here
+   — the whole of what makes this image bigger than the base.
 
-2. **The image was pushed to ECR.** The registry repository was created if it didn't already exist, Docker authenticated to it, and the image was pushed. From this point Lambda has somewhere to pull your code from. Note that the framework tracks the image by its *digest*, not by a `:latest` tag — so when you later update the function, it points at the exact image you just built, with no ambiguity about which version is running.
+2. **The image was pushed to ECR.** The registry repository was
+   created if it didn't already exist, Docker authenticated to it, and
+   the image was pushed. From this point Lambda has somewhere to pull
+   your code from. Note that the framework tracks the image by its
+   *digest*, not by a `:latest` tag — so when you later update the
+   function, it points at the exact image you just built, with no
+   ambiguity about which version is running.
 
-3. **The execution role was created.** A Lambda runs as an IAM identity, and that identity has to (a) be assumable by the Lambda service and (b) carry the permissions your function needs. ALRB created the role with the right trust relationship, then attached the managed policies listed in your `policies` file — here, just the CloudWatch logging permission. (If you'd supplied a `custom-policies.json`, its inline permissions would have gone on here too.) This is the single most common place first deployments stumble, almost always over a missing `iam:PassRole`; Section 11 covers the permission model and Section 13 the specific failure.
+3. **The execution role was created.** A Lambda runs as an IAM
+   identity, and that identity has to (a) be assumable by the Lambda
+   service and (b) carry the permissions your function needs. ALRB
+   created the role with the right trust relationship, then attached
+   the managed policies listed in your `policies` file — here, just
+   the CloudWatch logging permission. (If you'd supplied a
+   `custom-policies.json`, its inline permissions would have gone on
+   here too.) This is the single most common place first deployments
+   stumble, almost always over a missing `iam:PassRole`; Section 11
+   covers the permission model and Section 13 the specific failure.
 
-4. **The function was created.** With an image to run and a role to run as, the function itself came into being — pointed at the pushed image by digest, with the memory, timeout, and reserved concurrency from your configuration (all defaulted, since you didn't set them).
+4. **The function was created.** With an image to run and a role to
+   run as, the function itself came into being — pointed at the pushed
+   image by digest, with the memory, timeout, and reserved concurrency
+   from your configuration (all defaulted, since you didn't set them).
 
-5. **The log group was created.** Its CloudWatch log group was created explicitly, with the retention you configured (the default is one day), rather than left to appear implicitly on first invocation. That's why `aws logs tail` had something to point at immediately, and why old logs won't accumulate cost indefinitely.
+5. **The log group was created.** Its CloudWatch log group was created
+   explicitly, with the retention you configured (the default is one
+   day), rather than left to appear implicitly on first
+   invocation. That's why `aws logs tail` had something to point at
+   immediately, and why old logs won't accumulate cost indefinitely.
 
-6. **The trigger was wired.** Only now, with a working function in place, did the EventBridge side get built: the schedule rule was created, your function was registered as its target, and — the easily-missed piece — EventBridge was granted permission to invoke your function. Receiving an event and being *allowed* to deliver it are two separate grants, and the pipeline handled both.
+6. **The trigger was wired.** Only now, with a working function in
+   place, did the EventBridge side get built: the schedule rule was
+   created, your function was registered as its target, and — the
+   easily-missed piece — EventBridge was granted permission to invoke
+   your function. Receiving an event and being *allowed* to deliver it
+   are two separate grants, and the pipeline handled both.
 
-Notice the shape of that sequence: the function is built completely before anything is allowed to invoke it. That's the function-versus-trigger split from Section 2 made concrete — steps 1–5 build a function you could invoke by hand (as `make invoke` did), and step 6 is the event source that invokes it for you. The two halves are independent, which is why you can change a trigger later without rebuilding the function, or invoke the function directly to debug it in isolation from its trigger.
+Notice the shape of that sequence: the function is built completely
+before anything is allowed to invoke it. That's the
+function-versus-trigger split from Section 2 made concrete — steps 1–5
+build a function you could invoke by hand (as `make invoke` did), and
+step 6 is the event source that invokes it for you. The two halves are
+independent, which is why you can change a trigger later without
+rebuilding the function, or invoke the function directly to debug it
+in isolation from its trigger.
 
-And this is where the "safe to re-run" promise pays off. Each of those steps recorded its completion as a sentinel file under `.cache/hello-lambda/`. Run `alr-builder build-lambda` again right now and almost nothing happens — every sentinel is present, so every step reports itself already done. That's not a special "resume" mode; it's the same *done-until-invalidated* rule every time. It means a half-finished deploy is never a wedged deploy: fix whatever failed, run the identical command, and the pipeline picks up exactly where it stopped. It also means you're never guessing about state — the sentinels *are* the state, sitting in a directory you can list, and any single step is a target you can force by removing its sentinel. Which is precisely the lever Section 9 reaches for when the question becomes "I changed one thing — what has to rebuild?"
+And this is where the "safe to re-run" promise pays off. Each of those
+steps recorded its completion as a sentinel file under
+`.cache/hello-lambda/`. Run `alr-builder build-lambda` again right now
+and almost nothing happens — every sentinel is present, so every step
+reports itself already done. That's not a special "resume" mode; it's
+the same *done-until-invalidated* rule every time. It means a
+half-finished deploy is never a wedged deploy: fix whatever failed,
+run the identical command, and the pipeline picks up exactly where it
+stopped. It also means you're never guessing about state — the
+sentinels *are* the state, sitting in a directory you can list, and
+any single step is a target you can force by removing its
+sentinel. Which is precisely the lever Section 9 reaches for when the
+question becomes "I changed one thing — what has to rebuild?"
 
-That's the whole pipeline, demystified. From here the guide stops moving in a straight line: Part II takes the pieces you just watched — the handler, the configuration, the triggers, the image, the permissions — one at a time, in depth. If you only wanted a working Perl Lambda, you already have the recipe. If you want to *understand* it, read on.
+That's the whole pipeline, demystified. From here the guide stops
+moving in a straight line: Part II takes the pieces you just watched —
+the handler, the configuration, the triggers, the image, the
+permissions — one at a time, in depth. If you only wanted a working
+Perl Lambda, you already have the recipe. If you want to *understand*
+it, read on.
 
 ---
 
@@ -343,11 +512,28 @@ That's the whole pipeline, demystified. From here the guide stops moving in a st
 
 ## 6. The handler contract
 
-In Section 4 you wrote a handler class, registered one event type, and implemented one method. This section is the whole of what you were participating in — how an event finds its way to your code, every method you can implement, and what the runtime does with what you return. It's reference more than narrative; read it once and come back to it.
+In Section 4 you wrote a handler class, registered one event type, and
+implemented one method. This section is the whole of what you were
+participating in — how an event finds its way to your code, every
+method you can implement, and what the runtime does with what you
+return. It's reference more than narrative; read it once and come back
+to it.
 
-**How an event reaches your method.** When Lambda invokes your container, the runtime's loop pulls the event, and calls the `handler` method on your class. The base `handler` — the one you inherit from `Amazon::Lambda::Runtime` — does three things: it *detects the source* of the raw event, looks up the handler class you *registered* for that source, and instantiates it to *process* the event, which unwraps it and calls the specific `on_*` method for each record. Detection is structural, not configured: an SQS or S3 event carries `Records` with an `eventSource`; SNS carries `Records` with an `EventSource`; an EventBridge event has a `detail-type`; an ALB request has `requestContext.elb`. You never write that detection — you register interest and implement the method.
+**How an event reaches your method.** When Lambda invokes your
+container, the runtime's loop pulls the event, and calls the `handler`
+method on your class. The base `handler` — the one you inherit from
+`Amazon::Lambda::Runtime` — does three things: it *detects the source*
+of the raw event, looks up the handler class you *registered* for that
+source, and instantiates it to *process* the event, which unwraps it
+and calls the specific `on_*` method for each record. Detection is
+structural, not configured: an SQS or S3 event carries `Records` with
+an `eventSource`; SNS carries `Records` with an `EventSource`; an
+EventBridge event has a `detail-type`; an ALB request has
+`requestContext.elb`. You never write that detection — you register
+interest and implement the method.
 
-**Registration.** Your handler class inherits the runtime and maps event sources to the classes that handle them:
+**Registration.** Your handler class inherits the runtime and maps
+event sources to the classes that handle them:
 
 ```perl
 package MyHandler;
@@ -358,23 +544,67 @@ __PACKAGE__->register_event_handler( $EVENT_SQS         => 'Event::SQS' );
 __PACKAGE__->register_event_handler( $EVENT_EVENTBRIDGE => 'Event::EventBridge' );
 ```
 
-The `$EVENT_*` constants (`$EVENT_SQS`, `$EVENT_SNS`, `$EVENT_S3`, `$EVENT_EVENTBRIDGE`, `$EVENT_ALB`) name the sources; the second argument names *your* class that handles each. Those classes inherit the matching `Amazon::Lambda::Runtime::Event::*` base and override the `on_*` method. Register only the sources you care about; anything unregistered still falls back to the runtime's own base class, which logs and returns an `unhandled` marker rather than erroring.
+The `$EVENT_*` constants (`$EVENT_SQS`, `$EVENT_SNS`, `$EVENT_S3`,
+`$EVENT_EVENTBRIDGE`, `$EVENT_ALB`) name the sources; the second
+argument names *your* class that handles each. Those classes inherit
+the matching `Amazon::Lambda::Runtime::Event::*` base and override the
+`on_*` method. Register only the sources you care about; anything
+unregistered still falls back to the runtime's own base class, which
+logs and returns an `unhandled` marker rather than erroring.
 
-**The methods, by event type.** Each base class does the unwrapping and hands your method exactly what it needs:
+**The methods, by event type.** Each base class does the unwrapping
+and hands your method exactly what it needs:
 
-- **SQS** — `on_message($body, $record)`. The runtime decodes each message body from JSON when it can, transparently unwraps an SNS-to-SQS envelope so you get the inner message, and silently drops S3's `s3:TestEvent` probe. So `$body` is usually a ready-to-use data structure, not a raw string; `$record` is the untouched SQS record if you need metadata.
+- **SQS** — `on_message($body, $record)`. The runtime decodes each
+  message body from JSON when it can, transparently unwraps an
+  SNS-to-SQS envelope so you get the inner message, and silently drops
+  S3's `s3:TestEvent` probe. So `$body` is usually a ready-to-use data
+  structure, not a raw string; `$record` is the untouched SQS record
+  if you need metadata.
 
-- **SNS** — `on_notification($message, $sns, $record)`. `$message` is the decoded notification payload, `$sns` is the SNS envelope (`TopicArn`, `Subject`, `Message`), and `$record` is the raw record.
+- **SNS** — `on_notification($message, $sns, $record)`. `$message` is
+  the decoded notification payload, `$sns` is the SNS envelope
+  (`TopicArn`, `Subject`, `Message`), and `$record` is the raw record.
 
-- **S3** — `on_s3_event($record)` catches every object event, and each `$record` carries the bucket and object under `$record->{s3}`. If you want finer granularity, the base also dispatches by operation to `on_object_created`, `on_object_removed`, `on_object_restored`, `on_object_tagged`, and `on_lifecycle_expiration` — each receiving `($record)` and, unless you override it, delegating to `on_s3_event`. (S3 notifications wrapped in SNS are unwrapped for you.)
+- **S3** — `on_s3_event($record)` catches every object event, and each
+  `$record` carries the bucket and object under `$record->{s3}`. If
+  you want finer granularity, the base also dispatches by operation to
+  `on_object_created`, `on_object_removed`, `on_object_restored`,
+  `on_object_tagged`, and `on_lifecycle_expiration` — each receiving
+  `($record)` and, unless you override it, delegating to
+  `on_s3_event`. (S3 notifications wrapped in SNS are unwrapped for
+  you.)
 
-- **EventBridge** — `on_event($detail_type, $detail, $event)`, as in Section 4: the rule's detail-type, its detail payload, and the whole event.
+- **EventBridge** — `on_event($detail_type, $detail, $event)`, as in
+  Section 4: the rule's detail-type, its detail payload, and the whole
+  event.
 
-- **ALB** — `on_request($method, $path, $params, $event)`. The base parses the HTTP method and path, decodes a form-encoded body (base64-decoding first when ALB flags it) into `$params`, and expects you to return an ALB-shaped response — for which the base provides a helper so you don't hand-assemble the `statusCode`/`headers`/`body` structure. Note the scaffolded `LambdaHandler.pm` ships stubs for SQS, SNS, S3, and EventBridge but *not* ALB; the runtime fully supports it, so an ALB handler is one you write from this contract rather than edit from an example.
+- **ALB** — `on_request($method, $path, $params, $event)`. The base
+  parses the HTTP method and path, decodes a form-encoded body
+  (base64-decoding first when ALB flags it) into `$params`, and
+  expects you to return an ALB-shaped response — for which the base
+  provides a helper so you don't hand-assemble the
+  `statusCode`/`headers`/`body` structure. Note the scaffolded
+  `LambdaHandler.pm` ships stubs for SQS, SNS, S3, and EventBridge but
+  *not* ALB; the runtime fully supports it, so an ALB handler is one
+  you write from this contract rather than edit from an example.
 
-**What you return.** The runtime inspects your handler's return value and does one of four things: if it *dies*, the exception is caught, logged, and reported to Lambda as an invocation error; if it returns a *string*, that becomes the invocation response; if it returns *undef*, the runtime assumes you've already sent the response yourself and does nothing; and if it returns a *code reference*, that's treated as a streaming response. In practice the `on_*` methods return nothing, and the base `process` returns a small `{"status":"ok"}` JSON string on your behalf — which is exactly the response you saw come back from `make invoke` in Section 4, while your logged greeting went to CloudWatch.
+**What you return.** The runtime inspects your handler's return value
+and does one of four things: if it *dies*, the exception is caught,
+logged, and reported to Lambda as an invocation error; if it returns a
+*string*, that becomes the invocation response; if it returns *undef*,
+the runtime assumes you've already sent the response yourself and does
+nothing; and if it returns a *code reference*, that's treated as a
+streaming response. In practice the `on_*` methods return nothing, and
+the base `process` returns a small `{"status":"ok"}` JSON string on
+your behalf — which is exactly the response you saw come back from
+`make invoke` in Section 4, while your logged greeting went to
+CloudWatch.
 
-**Streaming (Function URL).** Streaming is the one case that bypasses the registry. If your top-level `handler` returns a code reference, the runtime opens a streaming response and calls your reference with a writer:
+**Streaming (Function URL).** Streaming is the one case that bypasses
+the registry. If your top-level `handler` returns a code reference,
+the runtime opens a streaming response and calls your reference with a
+writer:
 
 ```perl
 sub handler {
@@ -389,45 +619,171 @@ sub handler {
 }
 ```
 
-Because this lives in `handler` itself, a handler that streams for Function URL invocations but dispatches normally for everything else overrides `handler`, returns the code reference when the event looks like a Function URL request, and otherwise defers to the inherited dispatch — which is precisely the shape of the scaffolded template.
+Because this lives in `handler` itself, a handler that streams for
+Function URL invocations but dispatches normally for everything else
+overrides `handler`, returns the code reference when the event looks
+like a Function URL request, and otherwise defers to the inherited
+dispatch — which is precisely the shape of the scaffolded template.
 
-**What every handler has.** Inside any `on_*` method, `$self->get_logger` returns the runtime's `Log::Log4perl` logger (output goes to CloudWatch; verbosity follows the `LOG_LEVEL` environment variable, defaulting to info), and `$self->get_context` returns the invocation's `Amazon::Lambda::Runtime::Context`. The raw event and its records remain available through `get_event` and `get_records` if you need to reach past what your method was handed.
+**What every handler has.** Inside any `on_*` method,
+`$self->get_logger` returns the runtime's `Log::Log4perl` logger
+(output goes to CloudWatch; verbosity follows the `LOG_LEVEL`
+environment variable, defaulting to info), and `$self->get_context`
+returns the invocation's `Amazon::Lambda::Runtime::Context`. The raw
+event and its records remain available through `get_event` and
+`get_records` if you need to reach past what your method was handed.
 
-**Bringing existing code in.** This contract is deliberately thin because the point is that your handler method is a *place to call code you already have*, not a place to rewrite it. The mapping from a daemon or job to a handler is usually direct: the body of a queue-polling loop becomes `on_message`; a routine that processes a dropped file becomes `on_s3_event`; the `main` of a cron script becomes `on_event`. The modules you `use` today come along unchanged — you install them into the image as ordinary dependencies (Section 10) and call them exactly as you do now. Two habits carry over from long-running processes and matter here for the same reason they always did: put expensive setup — a database handle, a client object, a loaded config — at file scope or behind a memoized accessor rather than inside the `on_*` method, so a warm container reuses it across invocations instead of rebuilding it each time (the scaffold's memoized S3 client is the pattern); and keep the handler's own logic idempotent, since an event source may deliver the same event more than once. What you are really doing when you "port" a daemon to Lambda is deleting its loop and its process-management scaffolding — the runtime is now the loop — and keeping the part that did the work.
+**Bringing existing code in.** This contract is deliberately thin
+because the point is that your handler method is a *place to call code
+you already have*, not a place to rewrite it. The mapping from a
+daemon or job to a handler is usually direct: the body of a
+queue-polling loop becomes `on_message`; a routine that processes a
+dropped file becomes `on_s3_event`; the `main` of a cron script
+becomes `on_event`. The modules you `use` today come along unchanged —
+you install them into the image as ordinary dependencies (Section 10)
+and call them exactly as you do now. Two habits carry over from
+long-running processes and matter here for the same reason they always
+did: put expensive setup — a database handle, a client object, a
+loaded config — at file scope or behind a memoized accessor rather
+than inside the `on_*` method, so a warm container reuses it across
+invocations instead of rebuilding it each time (the scaffold's
+memoized S3 client is the pattern); and keep the handler's own logic
+idempotent, since an event source may deliver the same event more than
+once. What you are really doing when you "port" a daemon to Lambda is
+deleting its loop and its process-management scaffolding — the runtime
+is now the loop — and keeping the part that did the work.
 
 ## 7. Configuration
 
-Everything about a function that isn't its code — its name, memory, timeout, trigger type, and the trigger's details — is configuration, and all of it resolves to one flat file the build reads: `lambda.env`, a plain list of `KEY = value` lines that the Makefiles pull in. You can write that file by hand, and for a long time that was the only way. But hand-maintaining two dozen `KEY = value` lines, most of them left at their defaults, is tedious and easy to get subtly wrong, so ALRB offers a second, layered model on top of it. Understanding both — and the small schema file that ties them together — is the whole of this section.
+Everything about a function that isn't its code — its name, memory,
+timeout, trigger type, and the trigger's details — is configuration,
+and all of it resolves to one flat file the build reads: `lambda.env`,
+a plain list of `KEY = value` lines that the Makefiles pull in. You
+can write that file by hand, and for a long time that was the only
+way. But hand-maintaining two dozen `KEY = value` lines, most of them
+left at their defaults, is tedious and easy to get subtly wrong, so
+ALRB offers a second, layered model on top of it. Understanding both —
+and the small schema file that ties them together — is the whole of
+this section.
 
-**The mapping.** `lambda-mapping.yml`, installed with the framework, is the schema that defines every configuration field exactly once. Each entry records four things: the `env` variable the Makefiles read (e.g. `MEMORY`), the `yaml` path it corresponds to (`lambda.memory`), its default if any, whether it's `required`, and — importantly — which trigger types it `applies_to`. That last field is what lets the tooling talk about only the settings relevant to *your* trigger: a queue's visibility timeout is meaningful for `s3-sqs` and silently irrelevant for `eventbridge`, and the mapping encodes that rather than leaving you to know it. The mapping also carries a version number, which matters for regeneration below.
+**The mapping.** `lambda-mapping.yml`, installed with the framework,
+is the schema that defines every configuration field exactly
+once. Each entry records four things: the `env` variable the Makefiles
+read (e.g. `MEMORY`), the `yaml` path it corresponds to
+(`lambda.memory`), its default if any, whether it's `required`, and —
+importantly — which trigger types it `applies_to`. That last field is
+what lets the tooling talk about only the settings relevant to *your*
+trigger: a queue's visibility timeout is meaningful for `s3-sqs` and
+silently irrelevant for `eventbridge`, and the mapping encodes that
+rather than leaving you to know it. The mapping also carries a version
+number, which matters for regeneration below.
 
 **Two ways to manage it.** You choose per project:
 
-*Hand-written `lambda.env`.* Edit the flat file directly. This is still fully supported, and if there's no `lambda.yaml` in the project, ALRB treats `lambda.env` as authoritative and never touches it. Validate it against the mapping's requirements with `alr-builder check-env-file`.
+*Hand-written `lambda.env`.* Edit the flat file directly. This is
+still fully supported, and if there's no `lambda.yaml` in the project,
+ALRB treats `lambda.env` as authoritative and never touches
+it. Validate it against the mapping's requirements with `alr-builder
+check-env-file`.
 
-*Generated from `lambda.yaml`.* Write a small structured `lambda.yaml` describing only the values that matter for your function; everything else comes from the mapping's defaults. This is the model Section 4 used, and the one to prefer — a five-line `lambda.yaml` is far easier to read and reason about than a `lambda.env` padded out with defaults.
+*Generated from `lambda.yaml`.* Write a small structured `lambda.yaml`
+describing only the values that matter for your function; everything
+else comes from the mapping's defaults. This is the model Section 4
+used, and the one to prefer — a five-line `lambda.yaml` is far easier
+to read and reason about than a `lambda.env` padded out with defaults.
 
-**How generation works.** When `lambda.yaml` is present, ALRB keeps `lambda.env` in sync with it automatically — the regeneration check runs at the start of *every* `alr-builder` invocation, so by the time the Makefiles read `lambda.env` it is already current. Regeneration happens when any of three things is true: `lambda.env` doesn't exist yet, `lambda.yaml` is newer than `lambda.env`, or the mapping's version has changed since `lambda.env` was last generated (its version is stamped into the file's header). When it regenerates, ALRB walks the mapping, filters to the fields that apply to your `trigger.type`, pulls each value from `lambda.yaml` or falls back to the mapping default, and writes `lambda.env` with a header noting that it's generated and should not be hand-edited. If `lambda.yaml` omits a field the mapping marks required, regeneration refuses — it warns and leaves the existing file alone rather than emit a broken one. And the escape hatch is deliberate and stated in that header: delete `lambda.yaml`, and `lambda.env` becomes a hand-editable file again.
+**How generation works.** When `lambda.yaml` is present, ALRB keeps
+`lambda.env` in sync with it automatically — the regeneration check
+runs at the start of *every* `alr-builder` invocation, so by the time
+the Makefiles read `lambda.env` it is already current. Regeneration
+happens when any of three things is true: `lambda.env` doesn't exist
+yet, `lambda.yaml` is newer than `lambda.env`, or the mapping's
+version has changed since `lambda.env` was last generated (its version
+is stamped into the file's header). When it regenerates, ALRB walks
+the mapping, filters to the fields that apply to your `trigger.type`,
+pulls each value from `lambda.yaml` or falls back to the mapping
+default, and writes `lambda.env` with a header noting that it's
+generated and should not be hand-edited. If `lambda.yaml` omits a
+field the mapping marks required, regeneration refuses — it warns and
+leaves the existing file alone rather than emit a broken one. And the
+escape hatch is deliberate and stated in that header: delete
+`lambda.yaml`, and `lambda.env` becomes a hand-editable file again.
 
-The consequence worth internalizing: with a `lambda.yaml` in the project, `lambda.env` is a *build artifact*, not a source file. Don't edit it — your edits are overwritten the next time `lambda.yaml` changes. Edit `lambda.yaml`, or remove it to take manual control.
+The consequence worth internalizing: with a `lambda.yaml` in the
+project, `lambda.env` is a *build artifact*, not a source file. Don't
+edit it — your edits are overwritten the next time `lambda.yaml`
+changes. Edit `lambda.yaml`, or remove it to take manual control.
 
-**Checking configuration.** `alr-builder check-env-file` reads whatever you have (a `lambda.yaml`, a `lambda.env`, or neither) and reports against the mapping, scoped to your trigger type. It sorts every applicable field into three groups — *missing* required values with no default, values you've *customized* away from the default, and values *using defaults* — so you can see at a glance what you've set, what you've inherited, and what you still owe. Running it against a brand-new project with nothing configured is a useful way to see the full set of required and defaulted fields for a given trigger before you write anything. Beyond presence, it also applies a few per-trigger sanity checks and warns on values that are individually valid but collectively suspect — an `alb` listener ARN that doesn't look like an ELBv2 ARN, or an `s3-sqs` visibility timeout set below the six-times-the-function-timeout floor that keeps a message from being redelivered while it's still being processed. It exits non-zero if anything required is missing, so it slots naturally into a check before deploy.
+**Checking configuration.** `alr-builder check-env-file` reads
+whatever you have (a `lambda.yaml`, a `lambda.env`, or neither) and
+reports against the mapping, scoped to your trigger type. It sorts
+every applicable field into three groups — *missing* required values
+with no default, values you've *customized* away from the default, and
+values *using defaults* — so you can see at a glance what you've set,
+what you've inherited, and what you still owe. Running it against a
+brand-new project with nothing configured is a useful way to see the
+full set of required and defaulted fields for a given trigger before
+you write anything. Beyond presence, it also applies a few per-trigger
+sanity checks and warns on values that are individually valid but
+collectively suspect — an `alb` listener ARN that doesn't look like an
+ELBv2 ARN, or an `s3-sqs` visibility timeout set below the
+six-times-the-function-timeout floor that keeps a message from being
+redelivered while it's still being processed. It exits non-zero if
+anything required is missing, so it slots naturally into a check
+before deploy.
 
-**Migrating an existing `lambda.env`.** If you have a hand-written `lambda.env` and want to move to the `lambda.yaml` model, `alr-builder generate-yaml` does the one-time conversion: it validates the `lambda.env` first (refusing, with a list, if required values are missing), then writes a minimal `lambda.yaml` containing only the values that differ from their defaults. It won't clobber an existing `lambda.yaml` — remove that first if you mean to regenerate. From that point forward the generate-on-demand flow above takes over, and `lambda.env` becomes the artifact.
+**Migrating an existing `lambda.env`.** If you have a hand-written
+`lambda.env` and want to move to the `lambda.yaml` model, `alr-builder
+generate-yaml` does the one-time conversion: it validates the
+`lambda.env` first (refusing, with a list, if required values are
+missing), then writes a minimal `lambda.yaml` containing only the
+values that differ from their defaults. It won't clobber an existing
+`lambda.yaml` — remove that first if you mean to regenerate. From that
+point forward the generate-on-demand flow above takes over, and
+`lambda.env` becomes the artifact.
 
-**config.mk.** `lambda.env`/`lambda.yaml` hold per-Lambda configuration. Tool-level settings that apply across every project on your machine — which AWS profile to use, a DarkPAN resolver, and so on — don't belong there. `config.mk` is an optional `make` fragment, read before `lambda.env`, for exactly that: `AWS_PROFILE`, `AWS_ACCOUNT`, `RESOLVER`, and similar overrides. `alr-builder install` doesn't create one; if your project was bootstrapped with `CPAN::Maker::Bootstrapper`, a default `config.mk` is already there. Otherwise add it yourself — anything set there is a default that `lambda.env` and the environment can still override.
+**config.mk.** `lambda.env`/`lambda.yaml` hold per-Lambda
+configuration. Tool-level settings that apply across every project on
+your machine — which AWS profile to use, a DarkPAN resolver, and so on
+— don't belong there. `config.mk` is an optional `make` fragment, read
+before `lambda.env`, for exactly that: `AWS_PROFILE`, `AWS_ACCOUNT`,
+`RESOLVER`, and similar overrides. `alr-builder install` doesn't
+create one; if your project was bootstrapped with
+`CPAN::Maker::Bootstrapper`, a default `config.mk` is already
+there. Otherwise add it yourself — anything set there is a default
+that `lambda.env` and the environment can still override.
 
-Which trigger types exist, and the specific fields each one needs in `lambda.yaml`, is the subject of the next section; the consolidated field-by-field schema lives in the reference at the end.
+Which trigger types exist, and the specific fields each one needs in
+`lambda.yaml`, is the subject of the next section; the consolidated
+field-by-field schema lives in the reference at the end.
 
 ## 8. Trigger types
 
-A trigger is the event source that invokes your function — the serverless replacement for the loop a daemon used to run itself. You select one with `trigger.type`, and `make lambda-pipeline` provisions it. Every trigger sits on the same foundation: the pipeline builds the image, pushes it to ECR, creates the execution role and attaches policies, creates the function, and sets its configuration and log-group retention — and then adds the event source specific to the type. `lambda-pipeline` simply dispatches to the matching per-type pipeline based on `trigger.type`; you can run that pipeline directly, but you rarely need to.
+A trigger is the event source that invokes your function — the
+serverless replacement for the loop a daemon used to run itself. You
+select one with `trigger.type`, and `make lambda-pipeline` provisions
+it. Every trigger sits on the same foundation: the pipeline builds the
+image, pushes it to ECR, creates the execution role and attaches
+policies, creates the function, and sets its configuration and
+log-group retention — and then adds the event source specific to the
+type. `lambda-pipeline` simply dispatches to the matching per-type
+pipeline based on `trigger.type`; you can run that pipeline directly,
+but you rarely need to.
 
-Teardown follows the same shape in reverse and is deliberately conservative about shared and stateful resources. Every `*-teardown` removes the trigger wiring and the function, role, and ECR repository — but it leaves your data and anything that might be shared: an S3 bucket is never deleted (it holds objects), an SNS topic is left in place (it may have other subscribers), and an ALB is never touched (you brought your own). What each teardown removes is noted per type below.
+Teardown follows the same shape in reverse and is deliberately
+conservative about shared and stateful resources. Every `*-teardown`
+removes the trigger wiring and the function, role, and ECR repository
+— but it leaves your data and anything that might be shared: an S3
+bucket is never deleted (it holds objects), an SNS topic is left in
+place (it may have other subscribers), and an ALB is never touched
+(you brought your own). What each teardown removes is noted per type
+below.
 
 The five types, roughly in order of how much they ask of you:
 
-**`eventbridge` — the scheduled job.** The replacement for cron. You give it a schedule and it invokes your function on that cadence; your handler implements `on_event`.
+**`eventbridge` — the scheduled job.** The replacement for cron. You
+give it a schedule and it invokes your function on that cadence; your
+handler implements `on_event`.
 
 ```yaml
 image:
@@ -437,9 +793,18 @@ trigger:
   schedule: rate(1 hour)     # or a cron() expression; default rate(1 day)
 ```
 
-The pipeline creates the schedule rule (enabled by default), grants EventBridge permission to invoke the function, and registers the function as the rule's target. Beyond deploy, `enable-eventbridge-rule` and `disable-eventbridge-rule` pause and resume it without tearing anything down, and `delete-eventbridge-rule` removes just the rule. Teardown disables and deletes the rule, then removes the function, role, and repository.
+The pipeline creates the schedule rule (enabled by default), grants
+EventBridge permission to invoke the function, and registers the
+function as the rule's target. Beyond deploy,
+`enable-eventbridge-rule` and `disable-eventbridge-rule` pause and
+resume it without tearing anything down, and `delete-eventbridge-rule`
+removes just the rule. Teardown disables and deletes the rule, then
+removes the function, role, and repository.
 
-**`s3-direct` — the file watcher, unbuffered.** The replacement for a process watching a directory, when you want the object event delivered straight to your function. Your handler implements `on_s3_event` (or the per-operation hooks from Section 6).
+**`s3-direct` — the file watcher, unbuffered.** The replacement for a
+process watching a directory, when you want the object event delivered
+straight to your function. Your handler implements `on_s3_event` (or
+the per-operation hooks from Section 6).
 
 ```yaml
 image:
@@ -451,9 +816,21 @@ trigger:
   event: 's3:ObjectCreated:*'    # default
 ```
 
-The pipeline creates the bucket if it doesn't already exist, grants S3 permission to invoke the function, and configures the bucket notification to call the function directly on matching events. Teardown removes the notification and the invoke permission and deletes the function, role, and repository — but leaves the bucket and its contents.
+The pipeline creates the bucket if it doesn't already exist, grants S3
+permission to invoke the function, and configures the bucket
+notification to call the function directly on matching
+events. Teardown removes the notification and the invoke permission
+and deletes the function, role, and repository — but leaves the bucket
+and its contents.
 
-**`s3-sqs` — the file watcher, durable.** The same S3 trigger with a queue between the bucket and the function, and the pattern to reach for when the work matters: a queue-polling worker with buffering, retry/redrive, a dead-letter queue, and serialized processing. S3 notifications land in an SQS queue; the queue drives the function; failures that exceed the receive count move to a DLQ. Your handler implements `on_message` (Section 6 unwraps the S3 record inside the SQS body for you).
+**`s3-sqs` — the file watcher, durable.** The same S3 trigger with a
+queue between the bucket and the function, and the pattern to reach
+for when the work matters: a queue-polling worker with buffering,
+retry/redrive, a dead-letter queue, and serialized processing. S3
+notifications land in an SQS queue; the queue drives the function;
+failures that exceed the receive count move to a DLQ. Your handler
+implements `on_message` (Section 6 unwraps the S3 record inside the
+SQS body for you).
 
 ```yaml
 image:
@@ -471,9 +848,25 @@ trigger:
       name: my-work-queue-dlq    # default: <queue>-dlq
 ```
 
-The pipeline creates the queue and its dead-letter queue, sets the redrive policy from `receive_count`, grants S3 permission to send to the queue, points the bucket notification at the queue, and creates the event-source mapping that drives the function — pinned to your reserved concurrency (the default of 1 gives you strictly serial processing, which is what makes this a safe replacement for a single-threaded worker). Setting `partial_batch_response: true` enables `ReportBatchItemFailures` on the mapping, so a handler can fail individual records without redriving the whole batch. The visibility-timeout floor `check-env-file` warns about (Section 7) lives here — a message must stay invisible at least as long as your function might take to process it. Teardown removes the bucket notification, deletes both queues, and removes the function, role, and repository; the bucket is left alone.
+The pipeline creates the queue and its dead-letter queue, sets the
+redrive policy from `receive_count`, grants S3 permission to send to
+the queue, points the bucket notification at the queue, and creates
+the event-source mapping that drives the function — pinned to your
+reserved concurrency (the default of 1 gives you strictly serial
+processing, which is what makes this a safe replacement for a
+single-threaded worker). Setting `partial_batch_response: true`
+enables `ReportBatchItemFailures` on the mapping, so a handler can
+fail individual records without redriving the whole batch. The
+visibility-timeout floor `check-env-file` warns about (Section 7)
+lives here — a message must stay invisible at least as long as your
+function might take to process it. Teardown removes the bucket
+notification, deletes both queues, and removes the function, role, and
+repository; the bucket is left alone.
 
-**`sns` — the broadcast consumer.** The replacement for a process reacting to a published notification, and the natural fit for fan-out, where one event should reach several independent consumers. Your handler implements `on_notification`.
+**`sns` — the broadcast consumer.** The replacement for a process
+reacting to a published notification, and the natural fit for fan-out,
+where one event should reach several independent consumers. Your
+handler implements `on_notification`.
 
 ```yaml
 image:
@@ -483,9 +876,22 @@ trigger:
   topic_name: my-topic           # required
 ```
 
-The pipeline creates the topic (creation is idempotent, so an existing topic is reused), grants SNS permission to invoke the function, and subscribes the function to the topic. Teardown unsubscribes the function and removes the function, role, and repository — but pointedly does *not* delete the topic, since other subscribers may depend on it. If you truly own the topic and want it gone, remove it yourself.
+The pipeline creates the topic (creation is idempotent, so an existing
+topic is reused), grants SNS permission to invoke the function, and
+subscribes the function to the topic. Teardown unsubscribes the
+function and removes the function, role, and repository — but
+pointedly does *not* delete the topic, since other subscribers may
+depend on it. If you truly own the topic and want it gone, remove it
+yourself.
 
-**`alb` — the HTTP endpoint.** The replacement for a small web service or CGI/`mod_perl` handler — an HTTP path served by a function instead of a running web server. This is the one type that expects infrastructure you already have: an Application Load Balancer with an HTTPS listener, whose ARN you supply. Your handler implements `on_request` (Section 6), and note the scaffold ships no ALB stub, so you write that handler from the contract rather than editing an example.
+**`alb` — the HTTP endpoint.** The replacement for a small web service
+or CGI/`mod_perl` handler — an HTTP path served by a function instead
+of a running web server. This is the one type that expects
+infrastructure you already have: an Application Load Balancer with an
+HTTPS listener, whose ARN you supply. Your handler implements
+`on_request` (Section 6), and note the scaffold ships no ALB stub, so
+you write that handler from the contract rather than editing an
+example.
 
 ```yaml
 image:
@@ -497,13 +903,35 @@ trigger:
   priority: 10                   # listener-rule priority; default 10
 ```
 
-The pipeline grants the load balancer permission to invoke the function, creates a Lambda target group and registers the function into it, and adds a listener rule that routes the given path to that target group on your existing listener. Teardown removes the listener rule, deregisters and deletes the target group, removes the invoke permission, and deletes the function, role, and repository — leaving your ALB and its listener untouched. (Two ALB specifics that bite people — the auto-generated `*.elb.amazonaws.com` name has no HTTPS certificate, so a real deployment needs a custom domain, and the response `statusCode` must be a JSON integer — are covered in Troubleshooting.)
+The pipeline grants the load balancer permission to invoke the
+function, creates a Lambda target group and registers the function
+into it, and adds a listener rule that routes the given path to that
+target group on your existing listener. Teardown removes the listener
+rule, deregisters and deletes the target group, removes the invoke
+permission, and deletes the function, role, and repository — leaving
+your ALB and its listener untouched. (Two ALB specifics that bite
+people — the auto-generated `*.elb.amazonaws.com` name has no HTTPS
+certificate, so a real deployment needs a custom domain, and the
+response `statusCode` must be a JSON integer — are covered in
+Troubleshooting.)
 
-A note that spans all five: the Function URL streaming path from Section 6 is independent of `trigger.type`. Any function can expose a streaming HTTP endpoint via `lambda-function-url` regardless of which of these triggers (if any) it also carries.
+A note that spans all five: the Function URL streaming path from
+Section 6 is independent of `trigger.type`. Any function can expose a
+streaming HTTP endpoint via `lambda-function-url` regardless of which
+of these triggers (if any) it also carries.
 
 ## 9. The three-layer image: controlling size, content, and rebuilds
 
-This is the section that pays off a claim from the introduction — that ALRB gives you real control over what ends up in your container and what it costs to change. That control comes from a single structural idea: the image is built in *layers*, each one holding things that change at a different rate, so a change to fast-moving code never forces you to rebuild slow, expensive content. Understanding the layers is half of it; the other half is knowing, when you change something, exactly what rebuilds and how to force a rebuild when you need one. That "what and when to rebuild" question is the spine of this section.
+This is the section that pays off a claim from the introduction — that
+ALRB gives you real control over what ends up in your container and
+what it costs to change. That control comes from a single structural
+idea: the image is built in *layers*, each one holding things that
+change at a different rate, so a change to fast-moving code never
+forces you to rebuild slow, expensive content. Understanding the
+layers is half of it; the other half is knowing, when you change
+something, exactly what rebuilds and how to force a rebuild when you
+need one. That "what and when to rebuild" question is the spine of
+this section.
 
 ### 9.1 The three layers
 
@@ -519,13 +947,36 @@ Your deployed image is a stack of three layers, from the bottom up:
   └────────────────────────────────────────────────┘
 ```
 
-**`perl-lambda-base`** is the foundation: a prebuilt image carrying the Perl interpreter, the `bootstrap` entrypoint, the `plambda.pl` driver, and all of `Amazon::Lambda::Runtime`'s own dependencies. You never build it per project — it's the stable floor every Perl Lambda stands on.
+**`perl-lambda-base`** is the foundation: a prebuilt image carrying
+the Perl interpreter, the `bootstrap` entrypoint, the `plambda.pl`
+driver, and all of `Amazon::Lambda::Runtime`'s own dependencies. You
+never build it per project — it's the stable floor every Perl Lambda
+stands on.
 
-**The platform image** is an optional middle layer, built *from* `perl-lambda-base`, for artifacts that change far less often than your handler but are yours rather than the runtime's: a large CPAN dependency, a data file, a shared toolchain, a system library. It's built from a `Dockerfile.platform` you author and is entirely opt-in (9.5).
+**The platform image** is an optional middle layer, built *from*
+`perl-lambda-base`, for artifacts that change far less often than your
+handler but are yours rather than the runtime's: a large CPAN
+dependency, a data file, a shared toolchain, a system library. It's
+built from a `Dockerfile.platform` you author and is entirely opt-in
+(9.5).
 
-**The handler image** is the top: the framework's own Dockerfile, built *from* whichever image is beneath it (the base, or your platform layer if you have one), adding only your distribution's installed module tree. Internally this happens in two stages — a `debian:trixie-slim` builder stage installs your distribution and its prerequisites with `cpm`, and the final stage copies just that installed tree onto the layer beneath — so the build tools never ship in the deployed image.
+**The handler image** is the top: the framework's own Dockerfile,
+built *from* whichever image is beneath it (the base, or your platform
+layer if you have one), adding only your distribution's installed
+module tree. Internally this happens in two stages — a
+`debian:trixie-slim` builder stage installs your distribution and its
+prerequisites with `cpm`, and the final stage copies just that
+installed tree onto the layer beneath — so the build tools never ship
+in the deployed image.
 
-The organizing principle is the whole point: *put each thing in the layer that changes at its rate*. Your handler code changes constantly and rebuilds a thin top layer in seconds; a heavy dependency you touch twice a year lives in the platform layer and is rebuilt only when you actually change it; the runtime itself never rebuilds at all. That is how the container stays lean and how iteration stays fast — the two usually trade off against each other, and layering is what buys you both.
+The organizing principle is the whole point: *put each thing in the
+layer that changes at its rate*. Your handler code changes constantly
+and rebuilds a thin top layer in seconds; a heavy dependency you touch
+twice a year lives in the platform layer and is rebuilt only when you
+actually change it; the runtime itself never rebuilds at all. That is
+how the container stays lean and how iteration stays fast — the two
+usually trade off against each other, and layering is what buys you
+both.
 
 ### 9.2 The rebuild model
 
@@ -534,34 +985,63 @@ There are two caches between you and a rebuilt image, and they answer two differ
 The first is ALRB's own **sentinel** layer, which answers *does a build step run at all?* Every step records completion as a read-only file under `.cache/<function-name>/`, and the image build is an ordinary `make` target with ordinary dependencies:
 
 ```
-                 ┌──► cpanfile ──────────┐
-DIST_TARBALL ────┤                       ├──► image ──► deploy ──► image-digest ──► lambda-function ──► lambda-configuration
+                 ┌──► cpanfile ───────────┐
+DIST_TARBALL ────┤                        ├──► image ──► deploy ──► image-digest ──► lambda-function ──► lambda-configuration
                  └──► tarball-validated ──┘
 ```
 
-Because `image` depends on your distribution tarball (and on the `cpanfile` derived from its `META.json`), building a *new* tarball is what naturally invalidates the image and everything downstream of it — push, digest, function update. Build the same tarball twice and the sentinel is already present, so nothing rebuilds. This is why the normal development loop is simply "rebuild your distribution, run `make lambda-pipeline`" — the new tarball pulls the rest of the chain along behind it.
+Because `image` depends on your distribution tarball (and on the
+`cpanfile` derived from its `META.json`), building a *new* tarball is
+what naturally invalidates the image and everything downstream of it —
+push, digest, function update. Build the same tarball twice and the
+sentinel is already present, so nothing rebuilds. This is why the
+normal development loop is simply "rebuild your distribution, run
+`make lambda-pipeline`" — the new tarball pulls the rest of the chain
+along behind it.
 
-The second is **Docker's own layer cache**, which answers *once `docker build` runs, which layers inside it rebuild?* The Dockerfile is ordered so that stable things sit below volatile ones: the base OS packages, then the `cpm` install of your `cpanfile` dependencies (kept warm across builds by a build cache mount, so unchanged dependencies aren't reinstalled), then the install of your distribution tarball, then the reinstall layer (9.4), then the copy onto the layer beneath. A change high in that order rebuilds only from that point up.
+The second is **Docker's own layer cache**, which answers *once
+`docker build` runs, which layers inside it rebuild?* The Dockerfile
+is ordered so that stable things sit below volatile ones: the base OS
+packages, then the `cpm` install of your `cpanfile` dependencies (kept
+warm across builds by a build cache mount, so unchanged dependencies
+aren't reinstalled), then the install of your distribution tarball,
+then the reinstall layer (9.4), then the copy onto the layer
+beneath. A change high in that order rebuilds only from that point up.
 
-The practical consequence: to rebuild because your *code* changed, you don't do anything special — a new tarball drives it. To rebuild the *same* tarball anyway — because something outside the tarball changed, or you want to force a clean build — you either invalidate a sentinel (the `make` level) or bust Docker's layer cache (the Docker level). Those are the levers of the next two subsections.
+The practical consequence: to rebuild because your *code* changed, you
+don't do anything special — a new tarball drives it. To rebuild the
+*same* tarball anyway — because something outside the tarball changed,
+or you want to force a clean build — you either invalidate a sentinel
+(the `make` level) or bust Docker's layer cache (the Docker
+level). Those are the levers of the next two subsections.
 
 ### 9.3 Forcing rebuilds: cache busting
 
 Two variables reach the Docker layer cache, one surgical and one blunt:
 
-**`CACHE_BUST`** — the surgical one. Setting it to any new value invalidates the reinstall layer (9.4) and everything after it, while leaving the expensive dependency install below untouched. This is the lever for "a module I depend on was republished under the same version, and I need the image to pick it up" — the situation where nothing in your tarball changed but the resolved contents did.
+**`CACHE_BUST`** — the surgical one. Setting it to any new value
+invalidates the reinstall layer (9.4) and everything after it, while
+leaving the expensive dependency install below untouched. This is the
+lever for "a module I depend on was republished under the same
+version, and I need the image to pick it up" — the situation where
+nothing in your tarball changed but the resolved contents did.
 
 ```
 make image CACHE_BUST=$(date +%s)
 ```
 
-**`NOCACHE`** — the sledgehammer. Set it to `--no-cache` and `docker build` ignores its layer cache entirely, rebuilding every layer from the base OS up. Reach for it when you suspect the cache itself is stale or wrong, and accept that it's slow.
+**`NOCACHE`** — the sledgehammer. Set it to `--no-cache` and `docker
+build` ignores its layer cache entirely, rebuilding every layer from
+the base OS up. Reach for it when you suspect the cache itself is
+stale or wrong, and accept that it's slow.
 
 ```
 make image NOCACHE=--no-cache
 ```
 
-**Removing a sentinel** operates one level up — it forces `docker build` to *run* again, though the build may still hit Docker's layer cache unless paired with one of the above:
+**Removing a sentinel** operates one level up — it forces `docker
+build` to *run* again, though the build may still hit Docker's layer
+cache unless paired with one of the above:
 
 ```
 rm .cache/<function-name>/image && make image
@@ -569,34 +1049,81 @@ rm .cache/<function-name>/image && make image
 
 ### 9.4 `requires.reinstall`
 
-The reinstall layer exists for a specific, common situation: you depend on a module that *you* are also actively developing, and the version resolved from CPAN or your DarkPAN isn't the one you want baked into the image. List such modules — one bare `Module@version` per line — in a `requires.reinstall` file in your project root:
+The reinstall layer exists for a specific, common situation: you
+depend on a module that *you* are also actively developing, and the
+version resolved from CPAN or your DarkPAN isn't the one you want
+baked into the image. List such modules — one bare `Module@version`
+per line — in a `requires.reinstall` file in your project root:
 
 ```
 My::Module::Under::Development@1.2.3
 Another::WIP::Dist@0.9.0
 ```
 
-When that file is present, ALRB copies it into the build context and the Dockerfile reinstalls exactly those modules with `cpm --reinstall`, on top of whatever was already resolved, in a dedicated layer near the top of the image. Because that layer is otherwise Docker-cached, changing a version string in the file naturally busts it — but if you need to re-run the reinstall *without* changing the version (you rebuilt the same version of your in-development module and want it picked up again), that's exactly what `CACHE_BUST` from 9.3 is for. The two work together: the file says *what* to reinstall, `CACHE_BUST` forces *when*.
+When that file is present, ALRB copies it into the build context and
+the Dockerfile reinstalls exactly those modules with `cpm
+--reinstall`, on top of whatever was already resolved, in a dedicated
+layer near the top of the image. Because that layer is otherwise
+Docker-cached, changing a version string in the file naturally busts
+it — but if you need to re-run the reinstall *without* changing the
+version (you rebuilt the same version of your in-development module
+and want it picked up again), that's exactly what `CACHE_BUST` from
+9.3 is for. The two work together: the file says *what* to reinstall,
+`CACHE_BUST` forces *when*.
 
 ### 9.5 The platform layer in practice
 
-Reach for a platform layer when something in your handler image is both slow to build and slow to change — a large XS dependency, a bundled dataset, a system library — and you're tired of paying for it on every handler rebuild. Move it into the middle layer and it's built once and reused until you actually change it.
+Reach for a platform layer when something in your handler image is
+both slow to build and slow to change — a large XS dependency, a
+bundled dataset, a system library — and you're tired of paying for it
+on every handler rebuild. Move it into the middle layer and it's built
+once and reused until you actually change it.
 
-Two things enable it: set `PLATFORM_IMAGE` (to the image name or ECR repository the platform layer will occupy), and author a `Dockerfile.platform` in your project root that builds `FROM perl-lambda-base` and adds the stable artifacts. Then:
+Two things enable it: set `PLATFORM_IMAGE` (to the image name or ECR
+repository the platform layer will occupy), and author a
+`Dockerfile.platform` in your project root that builds `FROM
+perl-lambda-base` and adds the stable artifacts. Then:
 
 ```
 make platform
 ```
 
-builds and pushes the platform image — and, importantly, clears the handler-image sentinels (`image`, `deploy`, `image-digest`, `lambda-function`, `lambda-configuration`) so the next `make lambda-pipeline` rebuilds your handler *on top of* the new platform. You don't usually run `make platform` by hand, though: `lambda-pipeline` builds the platform first whenever `PLATFORM_IMAGE` is set and a `Dockerfile.platform` is present, so the layer is kept current as part of a normal deploy. The platform image is itself rebuilt only when `Dockerfile.platform` changes.
+builds and pushes the platform image — and, importantly, clears the
+handler-image sentinels (`image`, `deploy`, `image-digest`,
+`lambda-function`, `lambda-configuration`) so the next `make
+lambda-pipeline` rebuilds your handler *on top of* the new
+platform. You don't usually run `make platform` by hand, though:
+`lambda-pipeline` builds the platform first whenever `PLATFORM_IMAGE`
+is set and a `Dockerfile.platform` is present, so the layer is kept
+current as part of a normal deploy. The platform image is itself
+rebuilt only when `Dockerfile.platform` changes.
 
-`platform-teardown` clears the platform sentinels but deliberately leaves the ECR repository in place — a platform image is often shared across functions, so removing it is a manual, considered act.
+`platform-teardown` clears the platform sentinels but deliberately
+leaves the ECR repository in place — a platform image is often shared
+across functions, so removing it is a manual, considered act.
 
 ### 9.6 The overlay
 
-The overlay is the other end of the spectrum from the platform layer. Both let you reuse a handler and add artifacts to it, but they differ on where the artifacts attach and when. The platform layer sits *below* the handler and is consumed when the handler image is built (the handler is built `FROM` it); the overlay sits *above* an already-built handler and is applied when the function is deployed. That makes the overlay the tool for artifacts you want to ship *with* a finished handler without rebuilding or re-releasing it — a data layer is the canonical case: one handler distribution, deployed against different data bundles, each bundle an overlay.
+The overlay is the other end of the spectrum from the platform
+layer. Both let you reuse a handler and add artifacts to it, but they
+differ on where the artifacts attach and when. The platform layer sits
+*below* the handler and is consumed when the handler image is built
+(the handler is built `FROM` it); the overlay sits *above* an
+already-built handler and is applied when the function is
+deployed. That makes the overlay the tool for artifacts you want to
+ship *with* a finished handler without rebuilding or re-releasing it —
+a data layer is the canonical case: one handler distribution, deployed
+against different data bundles, each bundle an overlay.
 
-The mechanism is what makes this work cleanly. The handler image is built from the *framework's* Dockerfile, in a temporary build context you never see. The overlay is built from a `Dockerfile` that *you* provide in your project root — a different file entirely — and this is where the additive content goes: your overlay Dockerfile builds `FROM` the handler image and layers your artifacts on top. Set `OVERLAY` to a repository name, place your `Dockerfile` in the project root, and ALRB builds that image, pushes it to the overlay repository, and updates the deployed function to it directly:
+The mechanism is what makes this work cleanly. The handler image is
+built from the *framework's* Dockerfile, in a temporary build context
+you never see. The overlay is built from a `Dockerfile` that *you*
+provide in your project root — a different file entirely — and this is
+where the additive content goes: your overlay Dockerfile builds `FROM`
+the handler image and layers your artifacts on top. Set `OVERLAY` to a
+repository name, place your `Dockerfile` in the project root, and ALRB
+builds that image, pushes it to the overlay repository, and updates
+the deployed function to it directly:
 
 ```dockerfile
 # ./Dockerfile — your overlay, built on top of the handler image
@@ -604,11 +1131,20 @@ FROM perl-lambda:latest
 COPY data/reference-2026.db /var/task/data/
 ```
 
-The overlay is wired into the normal flow, gated on `OVERLAY` being set: `lambda-pipeline` applies it after the trigger is provisioned, `update-function` rebuilds and re-applies it on a change, and `lambda-teardown` removes it (deleting the overlay's ECR repository, which — unlike the platform repository — it *does* own). Its build depends on the handler image existing and on your `Dockerfile`, so the overlay rebuilds whenever either changes, and a missing project-root `Dockerfile` is a hard error rather than a silent skip.
+The overlay is wired into the normal flow, gated on `OVERLAY` being
+set: `lambda-pipeline` applies it after the trigger is provisioned,
+`update-function` rebuilds and re-applies it on a change, and
+`lambda-teardown` removes it (deleting the overlay's ECR repository,
+which — unlike the platform repository — it *does* own). Its build
+depends on the handler image existing and on your `Dockerfile`, so the
+overlay rebuilds whenever either changes, and a missing project-root
+`Dockerfile` is a hard error rather than a silent skip.
 
 ### 9.7 The picture, together
 
-The layers and the rebuild rules are one idea seen twice — a stack ordered by rate of change, and a sentinel chain that invalidates downward from whatever you touched:
+The layers and the rebuild rules are one idea seen twice — a stack
+ordered by rate of change, and a sentinel chain that invalidates
+downward from whatever you touched:
 
 ```
   CHANGE THIS...                          ...AND THIS REBUILDS
@@ -620,32 +1156,73 @@ The layers and the rebuild rules are one idea seen twice — a stack ordered by 
   perl-lambda-base          ─────────►    everything (rare; not a local build)
 ```
 
-Appendix A turns this into a lookup table — every change you might make, the target to run, and the cache lever if one applies — for when you want the answer without re-deriving it.
+Appendix A turns this into a lookup table — every change you might
+make, the target to run, and the cache lever if one applies — for when
+you want the answer without re-deriving it.
 
 ## 10. Dependencies and the DarkPAN
 
-A Lambda image is only as lean as the dependencies you put in it, and one of ALRB's quieter design decisions is that you never maintain a separate list of them. Your distribution already declares what it needs; the image installs exactly that. This section is about where those dependencies come from, where they're resolved from, and the two places — system libraries and AWS API calls — where a little knowledge saves you a frustrating build.
+A Lambda image is only as lean as the dependencies you put in it, and
+one of ALRB's quieter design decisions is that you never maintain a
+separate list of them. Your distribution already declares what it
+needs; the image installs exactly that. This section is about where
+those dependencies come from, where they're resolved from, and the two
+places — system libraries and AWS API calls — where a little knowledge
+saves you a frustrating build.
 
 ### 10.1 Your dependencies are your distribution's dependencies
 
-When ALRB builds the image, it generates the `cpanfile` it installs from — you don't write one. It reads your distribution tarball's `META.json` and emits a `cpanfile` containing the `runtime` and `configure` prerequisites your distribution already declares. That's the whole dependency list: whatever your `Makefile.PL`, `dist.ini`, or `cpanfile`-driven build recorded as your distribution's requirements is what gets installed into the container, and nothing else. Test and develop-phase prerequisites are deliberately left out — they have no place in a deployed function.
+When ALRB builds the image, it generates the `cpanfile` it installs
+from — you don't write one. It reads your distribution tarball's
+`META.json` and emits a `cpanfile` containing the `runtime` and
+`configure` prerequisites your distribution already declares. That's
+the whole dependency list: whatever your `Makefile.PL`, `dist.ini`, or
+`cpanfile`-driven build recorded as your distribution's requirements
+is what gets installed into the container, and nothing else. Test and
+develop-phase prerequisites are deliberately left out — they have no
+place in a deployed function.
 
-The practical upshot is that you manage dependencies in exactly one place, your distribution's own metadata, using the workflow you already use to build it. Add a module to your distribution's prerequisites, rebuild the tarball, and the next image picks it up — the regenerated `cpanfile` changes, which (per Section 9) invalidates the image and rebuilds it. There is no second list to keep in sync and no way for the image's dependencies to drift from your distribution's.
+The practical upshot is that you manage dependencies in exactly one
+place, your distribution's own metadata, using the workflow you
+already use to build it. Add a module to your distribution's
+prerequisites, rebuild the tarball, and the next image picks it up —
+the regenerated `cpanfile` changes, which (per Section 9) invalidates
+the image and rebuilds it. There is no second list to keep in sync and
+no way for the image's dependencies to drift from your distribution's.
 
 ### 10.2 Where dependencies resolve: CPAN and the DarkPAN
 
-By default, `cpm` resolves those prerequisites against public CPAN. For many functions that's fine. But two situations push you toward a private mirror — a *DarkPAN* — and ALRB is built with that in mind:
+By default, `cpm` resolves those prerequisites against public
+CPAN. For many functions that's fine. But two situations push you
+toward a private mirror — a *DarkPAN* — and ALRB is built with that in
+mind:
 
-- You depend on modules that aren't on CPAN: your own distributions, a client's, or forks you maintain.
-- You want builds to be *reproducible* — pinned to a known index rather than whatever CPAN served the day you built — which matters for a serverless artifact you may need to rebuild identically months later.
+- You depend on modules that aren't on CPAN: your own distributions, a
+  client's, or forks you maintain.
+- You want builds to be *reproducible* — pinned to a known index
+  rather than whatever CPAN served the day you built — which matters
+  for a serverless artifact you may need to rebuild identically months
+  later.
 
-A DarkPAN is just a CPAN-shaped mirror: an index (`02packages.details.txt`) over a tree of distribution tarballs, which you can host on S3 behind CloudFront, on a plain web server, or anywhere `cpm` can fetch from. You point ALRB at one with the `RESOLVER` variable, whose value is a `cpm` resolver spec — the mirror index and its URL:
+A DarkPAN is just a CPAN-shaped mirror: an index
+(`02packages.details.txt`) over a tree of distribution tarballs, which
+you can host on S3 behind CloudFront, on a plain web server, or
+anywhere `cpm` can fetch from. You point ALRB at one with the
+`RESOLVER` variable, whose value is a `cpm` resolver spec — the mirror
+index and its URL:
 
 ```
 make image RESOLVER=02packages,https://cpan.example.com/orepan2
 ```
 
-That becomes `cpm --resolver 02packages,https://cpan.example.com/orepan2`, so your own and CPAN's modules resolve through the same mirror in one pass. Set it once in `lambda.env` (or `lambda.yaml`) and every build — handler, reinstall layer, and all — resolves through your DarkPAN. This is also the seam that connects ALRB to the rest of the ecosystem: the same OrePAN2-on-S3 DarkPAN you publish your distributions to is the one your Lambda images install from.
+That becomes `cpm --resolver
+02packages,https://cpan.example.com/orepan2`, so your own and CPAN's
+modules resolve through the same mirror in one pass. Set it once in
+`lambda.env` (or `lambda.yaml`) and every build — handler, reinstall
+layer, and all — resolves through your DarkPAN. This is also the seam
+that connects ALRB to the rest of the ecosystem: the same
+OrePAN2-on-S3 DarkPAN you publish your distributions to is the one
+your Lambda images install from.
 
 > **Sidebar — Why `cpm`, not `cpanm`?**
 >
@@ -659,49 +1236,117 @@ That becomes `cpm --resolver 02packages,https://cpan.example.com/orepan2`, so yo
 
 ### 10.3 System libraries and XS modules
 
-Pure-Perl modules install without ceremony. XS modules — anything that compiles against a C library — need that library at two different moments, and the framework treats them differently.
+Pure-Perl modules install without ceremony. XS modules — anything that
+compiles against a C library — need that library at two different
+moments, and the framework treats them differently.
 
-At *build* time, the builder stage compiles XS against development headers. The base builder already carries the common ones (OpenSSL, expat, zlib, and the Perl development files), which covers a large fraction of CPAN. When a module needs one that isn't there, add it with `EXTRA_BUILD_PACKAGES`, appended to the builder stage's package install:
+At *build* time, the builder stage compiles XS against development
+headers. The base builder already carries the common ones (OpenSSL,
+expat, zlib, and the Perl development files), which covers a large
+fraction of CPAN. When a module needs one that isn't there, add it
+with `EXTRA_BUILD_PACKAGES`, appended to the builder stage's package
+install:
 
 ```
 make image EXTRA_BUILD_PACKAGES="libpq-dev libxml2-dev"
 ```
 
-At *run* time, an XS module needs the shared library itself — not the `-dev` headers — present in the deployed image. Add it with `EXTRA_RUNTIME_PACKAGES`, the runtime-stage counterpart to `EXTRA_BUILD_PACKAGES` (note the runtime package name, not the `-dev` one):
+At *run* time, an XS module needs the shared library itself — not the
+`-dev` headers — present in the deployed image. Add it with
+`EXTRA_RUNTIME_PACKAGES`, the runtime-stage counterpart to
+`EXTRA_BUILD_PACKAGES` (note the runtime package name, not the `-dev`
+one):
 
 ```
 make image EXTRA_RUNTIME_PACKAGES="libpq5 libxml2"
 ```
 
-When a runtime library is shared across several functions, a platform layer (§9.5) is the better home — install it once in a `Dockerfile.platform` and every handler built on that platform inherits it — but for a library a single function needs, `EXTRA_RUNTIME_PACKAGES` keeps it local to that handler's image.
+When a runtime library is shared across several functions, a platform
+layer (§9.5) is the better home — install it once in a
+`Dockerfile.platform` and every handler built on that platform
+inherits it — but for a library a single function needs,
+`EXTRA_RUNTIME_PACKAGES` keeps it local to that handler's image.
 
 ### 10.4 Calling AWS from your handler
 
-Receiving an event is one thing; calling back into AWS from your handler — reading an S3 object, writing to DynamoDB, publishing to SNS — is another, and it's where the leanness argument from the introduction becomes concrete. `Amazon::Lambda::Runtime` requires no AWS SDK at all, so nothing heavyweight is in your image unless you put it there.
+Receiving an event is one thing; calling back into AWS from your
+handler — reading an S3 object, writing to DynamoDB, publishing to SNS
+— is another, and it's where the leanness argument from the
+introduction becomes concrete. `Amazon::Lambda::Runtime` requires no
+AWS SDK at all, so nothing heavyweight is in your image unless you put
+it there.
 
-When you do need to call AWS, prefer a pay-for-what-you-use client over a monolithic SDK. `Amazon::API` and its companions let you load and instantiate only the single service client a given call needs — an S3 client, a DynamoDB client — rather than pulling in a library that models the entire AWS surface the way Paws does in Perl or `boto3` does in Python. They lean on lightweight HTTP (`HTTP::Tiny`) and request signing rather than a large transport stack, so a handler that touches one or two services adds one or two services' worth of weight to the image, not the whole cloud. Credentials come from the same chain everything else uses — `Amazon::Credentials` resolves the execution role's credentials inside Lambda automatically, which is exactly what the scaffolded S3 example relies on.
+When you do need to call AWS, prefer a pay-for-what-you-use client
+over a monolithic SDK. `Amazon::API` and its companions let you load
+and instantiate only the single service client a given call needs — an
+S3 client, a DynamoDB client — rather than pulling in a library that
+models the entire AWS surface the way Paws does in Perl or `boto3`
+does in Python. They lean on lightweight HTTP (`HTTP::Tiny`) and
+request signing rather than a large transport stack, so a handler that
+touches one or two services adds one or two services' worth of weight
+to the image, not the whole cloud. Credentials come from the same
+chain everything else uses — `Amazon::Credentials` resolves the
+execution role's credentials inside Lambda automatically, which is
+exactly what the scaffolded S3 example relies on.
 
-You install such a client the same way you install anything else: declare it as a prerequisite of your distribution, and it flows through `META.json` into the image (10.1). Nothing about it is special to ALRB — that's the point. It's an ordinary CPAN dependency, kept as small as the work demands.
+You install such a client the same way you install anything else:
+declare it as a prerequisite of your distribution, and it flows
+through `META.json` into the image (10.1). Nothing about it is special
+to ALRB — that's the point. It's an ordinary CPAN dependency, kept as
+small as the work demands.
 
 ## 11. IAM and permissions
 
-IAM is where Lambda deployments most often stumble, almost always because two different sets of permissions get conflated. This section separates them and shows where each is configured. Keep one distinction in mind throughout: the permissions *you* need to deploy a function are not the permissions the *function* needs to run, and they live in entirely different places.
+IAM is where Lambda deployments most often stumble, almost always
+because two different sets of permissions get conflated. This section
+separates them and shows where each is configured. Keep one
+distinction in mind throughout: the permissions *you* need to deploy a
+function are not the permissions the *function* needs to run, and they
+live in entirely different places.
 
 ### 11.1 The execution role
 
-Every Lambda function runs as an IAM identity — its *execution role* — and that role is what the running function is allowed to do. It has two parts. A *trust policy* declares who may assume the role; ALRB generates one automatically (the `policy-document` step) that permits the Lambda service to assume it, and creates the role from it (`lambda-role`). And a set of *permission policies* declares what the role may do once assumed — which is the part you configure, below.
+Every Lambda function runs as an IAM identity — its *execution role* —
+and that role is what the running function is allowed to do. It has
+two parts. A *trust policy* declares who may assume the role; ALRB
+generates one automatically (the `policy-document` step) that permits
+the Lambda service to assume it, and creates the role from it
+(`lambda-role`). And a set of *permission policies* declares what the
+role may do once assumed — which is the part you configure, below.
 
-This role is entirely separate from the credentials you deploy with (Section 3). Your credentials are the identity that *builds and creates* the function; the execution role is the identity the function *becomes* when it runs. A deployment can succeed — your credentials were sufficient — and the function can still fail at runtime because its execution role lacks a permission. The two are configured independently and fail independently.
+This role is entirely separate from the credentials you deploy with
+(Section 3). Your credentials are the identity that *builds and
+creates* the function; the execution role is the identity the function
+*becomes* when it runs. A deployment can succeed — your credentials
+were sufficient — and the function can still fail at runtime because
+its execution role lacks a permission. The two are configured
+independently and fail independently.
 
 ### 11.2 Triggers grant invocation, not access
 
-The single most common runtime surprise: wiring a trigger does not grant your function permission to call that service's API. They are separate grants pointing in opposite directions. When Section 8 says an S3 trigger "grants S3 permission to invoke the function," that permission lets S3 *call your function* — it says nothing about your function *calling S3*. A handler triggered by an S3 upload that then tries to read the uploaded object needs S3 read permission *on its execution role*, added as a policy here. The trigger and the API access are two doors, and the pipeline only opens the one that lets the event in.
+The single most common runtime surprise: wiring a trigger does not
+grant your function permission to call that service's API. They are
+separate grants pointing in opposite directions. When Section 8 says
+an S3 trigger "grants S3 permission to invoke the function," that
+permission lets S3 *call your function* — it says nothing about your
+function *calling S3*. A handler triggered by an S3 upload that then
+tries to read the uploaded object needs S3 read permission *on its
+execution role*, added as a policy here. The trigger and the API
+access are two doors, and the pipeline only opens the one that lets
+the event in.
 
 ### 11.3 Managed policies: the `policies` file or a profile
 
-AWS managed policies — the broad, AWS-maintained permission sets — are the usual way to grant a function what it needs, and ALRB gives you two ways to attach them. They're mutually exclusive: one or the other, not both.
+AWS managed policies — the broad, AWS-maintained permission sets — are
+the usual way to grant a function what it needs, and ALRB gives you
+two ways to attach them. They're mutually exclusive: one or the other,
+not both.
 
-The default is the **`policies` file** in your project (`POLICIES_FILE`, default `policies`): a plain list of managed-policy ARNs, one per line, with `#` comments. The scaffold ships it with CloudWatch logging enabled and a menu of common grants commented out, ready to uncomment:
+The default is the **`policies` file** in your project
+(`POLICIES_FILE`, default `policies`): a plain list of managed-policy
+ARNs, one per line, with `#` comments. The scaffold ships it with
+CloudWatch logging enabled and a menu of common grants commented out,
+ready to uncomment:
 
 ```
 # Basic Lambda execution (CloudWatch logging) - required
@@ -711,11 +1356,25 @@ arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 # arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
 ```
 
-The alternative is a **profile** (`ROLE_PROFILE`): the name of a predefined bundle in the framework's `profiles.yml`, each a curated list of managed policies for a common shape of function — `basic` (logging only), `s3-read`, `s3-sqs`, `s3`, `eventbridge`. Set `ROLE_PROFILE: s3-read` and the role gets logging plus S3 read without your hand-listing ARNs. If `ROLE_PROFILE` is unset, a `policies` file must exist (ALRB errors if neither is present); if it's set, the profile's list is used instead of the file.
+The alternative is a **profile** (`ROLE_PROFILE`): the name of a
+predefined bundle in the framework's `profiles.yml`, each a curated
+list of managed policies for a common shape of function — `basic`
+(logging only), `s3-read`, `s3-sqs`, `s3`, `eventbridge`. Set
+`ROLE_PROFILE: s3-read` and the role gets logging plus S3 read without
+your hand-listing ARNs. If `ROLE_PROFILE` is unset, a `policies` file
+must exist (ALRB errors if neither is present); if it's set, the
+profile's list is used instead of the file.
 
 ### 11.4 Inline custom policies: scoping to a resource
 
-Managed policies are broad by design — `AmazonS3ReadOnlyAccess` grants read on *every* bucket in the account. When you want to grant exactly what a function needs and no more — read on *one* bucket, publish to *one* topic — reach for an inline custom policy. Drop an IAM policy *document* (not a list of ARNs, but a real policy with `Statement`s and resource ARNs) into `custom-policies.json` (`CUSTOM_POLICIES_FILE`), and ALRB attaches it inline to the execution role:
+Managed policies are broad by design — `AmazonS3ReadOnlyAccess` grants
+read on *every* bucket in the account. When you want to grant exactly
+what a function needs and no more — read on *one* bucket, publish to
+*one* topic — reach for an inline custom policy. Drop an IAM policy
+*document* (not a list of ARNs, but a real policy with `Statement`s
+and resource ARNs) into `custom-policies.json`
+(`CUSTOM_POLICIES_FILE`), and ALRB attaches it inline to the execution
+role:
 
 ```json
 {
@@ -728,11 +1387,19 @@ Managed policies are broad by design — `AmazonS3ReadOnlyAccess` grants read on
 }
 ```
 
-The file is optional — absent, the step is a no-op — and it composes with whichever managed policies you attached. Use managed policies for broad, standard grants and an inline `custom-policies.json` for the resource-scoped ones, which is the shape most least-privilege setups want.
+The file is optional — absent, the step is a no-op — and it composes
+with whichever managed policies you attached. Use managed policies for
+broad, standard grants and an inline `custom-policies.json` for the
+resource-scoped ones, which is the shape most least-privilege setups
+want.
 
 ### 11.5 Applying and updating policies
 
-The pipeline attaches both kinds when it creates the function — `lambda-managed-policies` runs the file-or-profile attachment, `lambda-inline-policies` applies the custom document. When you change a policy afterward — uncomment a managed ARN, tighten a resource in `custom-policies.json` — re-apply without redeploying anything else:
+The pipeline attaches both kinds when it creates the function —
+`lambda-managed-policies` runs the file-or-profile attachment,
+`lambda-inline-policies` applies the custom document. When you change
+a policy afterward — uncomment a managed ARN, tighten a resource in
+`custom-policies.json` — re-apply without redeploying anything else:
 
 ```
 make update-policies              # both managed and inline
@@ -740,17 +1407,40 @@ make update-managed-policies      # just the file/profile
 make update-inline-policies       # just custom-policies.json
 ```
 
-Each removes the relevant sentinel and re-runs its attachment, so the change lands on the live role immediately.
+Each removes the relevant sentinel and re-runs its attachment, so the
+change lands on the live role immediately.
 
 ### 11.6 What `check` verifies — and what it doesn't
 
-`alr-builder check` (Section 3) simulates, against your *deploying* identity, the permissions the build-and-deploy path needs — creating and pushing to ECR, creating the role and passing it to Lambda, creating and invoking the function, and provisioning the SQS, SNS, S3, and EventBridge resources the triggers use. If your credentials fall short, it tells you before you spend time on a build. The full simulated list is in the reference (Section 14).
+`alr-builder check` (Section 3) simulates, against your *deploying*
+identity, the permissions the build-and-deploy path needs — creating
+and pushing to ECR, creating the role and passing it to Lambda,
+creating and invoking the function, and provisioning the SQS, SNS, S3,
+and EventBridge resources the triggers use. If your credentials fall
+short, it tells you before you spend time on a build. The full
+simulated list is in the reference (Section 14).
 
-Two limits are worth knowing. First, `check` validates your *deploying* credentials, not the execution role's *runtime* permissions — it cannot know what your handler will try to call, so the trigger-versus-access gap in 11.2 is yours to close. Second, a few deploy-time actions aren't simulated as shipped — CloudWatch Logs (the log group), ELBv2 (ALB triggers), and the inline `PutRolePolicy` used by custom policies — so if you use those features and the relevant permission is missing, it surfaces during the deploy rather than in `check`. The one gotcha that catches nearly everyone, `iam:PassRole`, *is* simulated; Section 13 covers the confusing error it produces when absent.
+Two limits are worth knowing. First, `check` validates your
+*deploying* credentials, not the execution role's *runtime*
+permissions — it cannot know what your handler will try to call, so
+the trigger-versus-access gap in 11.2 is yours to close. Second, a few
+deploy-time actions aren't simulated as shipped — CloudWatch Logs (the
+log group), ELBv2 (ALB triggers), and the inline `PutRolePolicy` used
+by custom policies — so if you use those features and the relevant
+permission is missing, it surfaces during the deploy rather than in
+`check`. The one gotcha that catches nearly everyone, `iam:PassRole`,
+*is* simulated; Section 13 covers the confusing error it produces when
+absent.
 
 ## 12. Day-two operations
 
-The first deploy is the interesting one; everything after is small, targeted changes to a function that already exists. This section covers those — code, configuration, policies, logs, and teardown — and doubles as a practical reference to the targets you'll reach for most. The through-line is the sentinel model from Section 9: almost every "update" target works by invalidating one sentinel and letting `make` redo exactly that step.
+The first deploy is the interesting one; everything after is small,
+targeted changes to a function that already exists. This section
+covers those — code, configuration, policies, logs, and teardown — and
+doubles as a practical reference to the targets you'll reach for
+most. The through-line is the sentinel model from Section 9: almost
+every "update" target works by invalidating one sentinel and letting
+`make` redo exactly that step.
 
 ### 12.1 Deploying a code change
 
@@ -760,37 +1450,75 @@ Change your handler, rebuild your distribution tarball, and run:
 make update-function
 ```
 
-The rebuilt tarball is what drives everything: it's newer than the image sentinel, so the image rebuilds, pushes to ECR, and the function's code is updated to the new image *by digest* — no `:latest` ambiguity about what's running. If `OVERLAY` is set, the overlay is rebuilt and re-applied on top (Section 9.6). The corollary is worth stating plainly: `update-function` without a rebuilt tarball is a no-op, because nothing upstream changed. The unit of a code deploy is a new tarball, not the command.
+The rebuilt tarball is what drives everything: it's newer than the
+image sentinel, so the image rebuilds, pushes to ECR, and the
+function's code is updated to the new image *by digest* — no `:latest`
+ambiguity about what's running. If `OVERLAY` is set, the overlay is
+rebuilt and re-applied on top (Section 9.6). The corollary is worth
+stating plainly: `update-function` without a rebuilt tarball is a
+no-op, because nothing upstream changed. The unit of a code deploy is
+a new tarball, not the command.
 
 ### 12.2 Changing configuration
 
-To change memory or timeout, edit `lambda.yaml` (or `lambda.env`) and force the configuration step:
+To change memory or timeout, edit `lambda.yaml` (or `lambda.env`) and
+force the configuration step:
 
 ```
 make update-lambda-configuration
 ```
 
-This re-applies memory and timeout to the live function from your current config. Remember the model from Section 7: if you keep a `lambda.yaml`, edit *that* — `lambda.env` is regenerated from it, and hand edits to `lambda.env` are overwritten.
+This re-applies memory and timeout to the live function from your
+current config. Remember the model from Section 7: if you keep a
+`lambda.yaml`, edit *that* — `lambda.env` is regenerated from it, and
+hand edits to `lambda.env` are overwritten.
 
-Changing a **trigger** setting — a schedule, a bucket, a queue parameter — is a different operation: re-run `make lambda-pipeline`, which is idempotent and re-provisions the trigger from your updated configuration. One caveat rooted in how AWS works: settings that *name* a resource identify it rather than reconfigure it. Renaming a queue in `lambda.yaml` doesn't rename the queue in AWS — it points the pipeline at a differently-named queue and creates that one, leaving the old behind. For changes to a resource's identity, tear down and redeploy; for changes to its parameters, re-running the pipeline is enough.
+Changing a **trigger** setting — a schedule, a bucket, a queue
+parameter — is a different operation: re-run `make lambda-pipeline`,
+which is idempotent and re-provisions the trigger from your updated
+configuration. One caveat rooted in how AWS works: settings that
+*name* a resource identify it rather than reconfigure it. Renaming a
+queue in `lambda.yaml` doesn't rename the queue in AWS — it points the
+pipeline at a differently-named queue and creates that one, leaving
+the old behind. For changes to a resource's identity, tear down and
+redeploy; for changes to its parameters, re-running the pipeline is
+enough.
 
 ### 12.3 Changing policies
 
-Covered in Section 11.5: edit the `policies` file or `custom-policies.json` and run `make update-policies` (or the `-managed`/`-inline` halves). The change lands on the live execution role immediately, with no need to touch the function itself.
+Covered in Section 11.5: edit the `policies` file or
+`custom-policies.json` and run `make update-policies` (or the
+`-managed`/`-inline` halves). The change lands on the live execution
+role immediately, with no need to touch the function itself.
 
 ### 12.4 Logs and retention
 
-Your function's output — everything sent through `$self->get_logger` — goes to the CloudWatch log group `/aws/lambda/<function-name>`. Log verbosity is controlled at runtime by the `LOG_LEVEL` environment variable (default `info`), so you can raise it to `debug` without a code change. To watch a function live:
+Your function's output — everything sent through `$self->get_logger` —
+goes to the CloudWatch log group `/aws/lambda/<function-name>`. Log
+verbosity is controlled at runtime by the `LOG_LEVEL` environment
+variable (default `info`), so you can raise it to `debug` without a
+code change. To watch a function live:
 
 ```
 aws logs tail /aws/lambda/<function-name> --follow
 ```
 
-Retention is governed by `LOG_RETENTION` (default one day), applied by the `log-group` target, which the configuration step ensures exists. The short default is deliberate — a chatty function left at infinite retention is a slow, silent cost. Raise it for functions whose history you actually need. `log-group-teardown` deletes the log group outright, and a full `lambda-teardown` does so as its last step.
+Retention is governed by `LOG_RETENTION` (default one day), applied by
+the `log-group` target, which the configuration step ensures
+exists. The short default is deliberate — a chatty function left at
+infinite retention is a slow, silent cost. Raise it for functions
+whose history you actually need. `log-group-teardown` deletes the log
+group outright, and a full `lambda-teardown` does so as its last step.
 
 ### 12.5 Reserved concurrency
 
-The `s3-sqs` pipeline pins the function's *reserved concurrency* (from `concurrency`, default 1) as part of provisioning — this is what makes that trigger a safe replacement for a single-threaded worker, since a reserved concurrency of 1 means AWS runs at most one invocation at a time and your queue is drained strictly in series. Raise it when the work is parallelizable and you want throughput; keep it at 1 when ordering or a shared external resource demands serialization.
+The `s3-sqs` pipeline pins the function's *reserved concurrency* (from
+`concurrency`, default 1) as part of provisioning — this is what makes
+that trigger a safe replacement for a single-threaded worker, since a
+reserved concurrency of 1 means AWS runs at most one invocation at a
+time and your queue is drained strictly in series. Raise it when the
+work is parallelizable and you want throughput; keep it at 1 when
+ordering or a shared external resource demands serialization.
 
 ### 12.6 Testing an invocation
 
@@ -800,43 +1528,136 @@ To invoke the deployed function directly with a sample event:
 make invoke
 ```
 
-`invoke` sends a sample event matching your `TRIGGER_TYPE` (resolving `payload-<trigger>.json`), calls the function synchronously, and prints the response — the fastest way to confirm a change works without waiting for the real trigger to fire. To send a specific event, drop a `payload-<trigger>.json` in the project or pass `PAYLOAD=your-file.json`. For a function exposing a streaming Function URL, `make test-streaming` exercises the streaming path with `curl` instead.
+`invoke` sends a sample event matching your `TRIGGER_TYPE` (resolving
+`payload-<trigger>.json`), calls the function synchronously, and
+prints the response — the fastest way to confirm a change works
+without waiting for the real trigger to fire. To send a specific
+event, drop a `payload-<trigger>.json` in the project or pass
+`PAYLOAD=your-file.json`. For a function exposing a streaming Function
+URL, `make test-streaming` exercises the streaming path with `curl`
+instead.
 
 ### 12.7 Tearing down versus cleaning
 
-Two commands look similar and do very different things. `make lambda-teardown` removes the deployed **AWS resources** — the function, role, trigger wiring, log group — dispatched by trigger type and conservative about shared or stateful resources (Section 8): buckets, SNS topics, and your ALB survive. `make clean`, by contrast, touches **nothing in AWS** — it removes the local sentinel files (and local Docker build artifacts), which makes the pipeline "forget" what it has done so the next run rebuilds from scratch. Use `clean` to force a fresh local rebuild of a function you want to keep; use `lambda-teardown` to actually remove the function from your account. Confusing the two is harmless in one direction (a stray `clean` just causes a rebuild) and merely inconvenient in the other (`lambda-teardown` is reversible by re-running the pipeline).
+Two commands look similar and do very different things. `make
+lambda-teardown` removes the deployed **AWS resources** — the
+function, role, trigger wiring, log group — dispatched by trigger type
+and conservative about shared or stateful resources (Section 8):
+buckets, SNS topics, and your ALB survive. `make clean`, by contrast,
+touches **nothing in AWS** — it removes the local sentinel files (and
+local Docker build artifacts), which makes the pipeline "forget" what
+it has done so the next run rebuilds from scratch. Use `clean` to
+force a fresh local rebuild of a function you want to keep; use
+`lambda-teardown` to actually remove the function from your
+account. Confusing the two is harmless in one direction (a stray
+`clean` just causes a rebuild) and merely inconvenient in the other
+(`lambda-teardown` is reversible by re-running the pipeline).
 
 ## 13. Troubleshooting
 
-When something goes wrong, three habits locate almost any problem quickly. Read the logs first — set `LOG_LEVEL=debug` (Section 12.4) and the runtime becomes voluble about what it received and dispatched. Check the sentinels — `.cache/<function-name>/` shows exactly which pipeline step last completed, so a failed deploy tells you where it stopped. And isolate with `make invoke` — invoking directly separates "my handler is broken" from "my trigger is misconfigured," because it exercises the function without the event source. The specific failures below are the ones that account for most first-deploy frustration.
+When something goes wrong, three habits locate almost any problem
+quickly. Read the logs first — set `LOG_LEVEL=debug` (Section 12.4)
+and the runtime becomes voluble about what it received and
+dispatched. Check the sentinels — `.cache/<function-name>/` shows
+exactly which pipeline step last completed, so a failed deploy tells
+you where it stopped. And isolate with `make invoke` — invoking
+directly separates "my handler is broken" from "my trigger is
+misconfigured," because it exercises the function without the event
+source. The specific failures below are the ones that account for most
+first-deploy frustration.
 
 ### 13.1 "The role cannot be assumed by Lambda"
 
-**Symptom:** the deploy fails creating the function, with an `InvalidParameterValueException` claiming the execution role cannot be assumed — even though the role plainly exists and looks correct. **Cause:** your *deploying* credentials are missing `iam:PassRole`. Creating a function hands (passes) the execution role to the Lambda service, and without permission to do so AWS reports it as an assume-role failure, which sends people to debug the role's trust policy — the wrong place entirely. **Fix:** grant `iam:PassRole` to your deploying identity. `alr-builder check` simulates this permission, so running it first surfaces the real problem with a clear name instead of the misleading runtime error.
+**Symptom:** the deploy fails creating the function, with an
+`InvalidParameterValueException` claiming the execution role cannot be
+assumed — even though the role plainly exists and looks
+correct. **Cause:** your *deploying* credentials are missing
+`iam:PassRole`. Creating a function hands (passes) the execution role
+to the Lambda service, and without permission to do so AWS reports it
+as an assume-role failure, which sends people to debug the role's
+trust policy — the wrong place entirely. **Fix:** grant `iam:PassRole`
+to your deploying identity. `alr-builder check` simulates this
+permission, so running it first surfaces the real problem with a clear
+name instead of the misleading runtime error.
 
 ### 13.2 "HANDLER_CLASS not found in the tarball"
 
-**Symptom:** the build stops immediately with `ERROR: <YourClass> not found in <tarball>`. **Cause:** the `tarball-validated` step looks for your handler class as `lib/<Your>/<Class>.pm` inside the distribution tarball and didn't find it — usually because the distribution's primary module doesn't match `HANDLER_CLASS`, or the tarball ALRB picked up is stale. **Fix:** confirm your handler class is installed at the expected `lib/` path in the distribution (`HANDLER_CLASS` of `My::Handler` must live at `lib/My/Handler.pm`), and that the newest `*.tar.gz` in the project directory is the one you meant to deploy. This check is deliberately early and cheap — it fails here rather than after a full image build.
+**Symptom:** the build stops immediately with `ERROR: <YourClass> not
+found in <tarball>`. **Cause:** the `tarball-validated` step looks for
+your handler class as `lib/<Your>/<Class>.pm` inside the distribution
+tarball and didn't find it — usually because the distribution's
+primary module doesn't match `HANDLER_CLASS`, or the tarball ALRB
+picked up is stale. **Fix:** confirm your handler class is installed
+at the expected `lib/` path in the distribution (`HANDLER_CLASS` of
+`My::Handler` must live at `lib/My/Handler.pm`), and that the newest
+`*.tar.gz` in the project directory is the one you meant to
+deploy. This check is deliberately early and cheap — it fails here
+rather than after a full image build.
 
 ### 13.3 Writes fail at runtime with "read-only file system"
 
-**Symptom:** the handler runs but dies trying to write a file. **Cause:** a Lambda container's filesystem is read-only *except* for `/tmp`. Code that writes anywhere else — a temp file in the working directory, a cache beside a module — works on your workstation and fails in Lambda. **Fix:** write only under `/tmp`. With `File::Temp`, pass `DIR => '/tmp'` explicitly rather than relying on a default that may resolve elsewhere; for anything else, root the path at `/tmp`. This is the single most common "works locally, fails deployed" surprise when porting existing code.
+**Symptom:** the handler runs but dies trying to write a
+file. **Cause:** a Lambda container's filesystem is read-only *except*
+for `/tmp`. Code that writes anywhere else — a temp file in the
+working directory, a cache beside a module — works on your workstation
+and fails in Lambda. **Fix:** write only under `/tmp`. With
+`File::Temp`, pass `DIR => '/tmp'` explicitly rather than relying on a
+default that may resolve elsewhere; for anything else, root the path
+at `/tmp`. This is the single most common "works locally, fails
+deployed" surprise when porting existing code.
 
 ### 13.4 Credentials fail inside the function
 
-**Symptom:** a handler that calls AWS works locally but, deployed, fails to find credentials or names a profile that doesn't exist. **Cause:** there is no `~/.aws/credentials` and no named profiles inside a Lambda container. The function's credentials come from its execution role, delivered through the container credential chain. Code that requests a specific named profile — fine on your workstation — has nothing to resolve against in Lambda. **Fix:** don't specify a profile in deployed code. `Amazon::Credentials` resolves the execution role's credentials from the container/IMDS chain automatically when you don't pin a profile (Section 10.4); let it. If you share code between a workstation and Lambda, make the profile conditional rather than hard-coded.
+**Symptom:** a handler that calls AWS works locally but, deployed,
+fails to find credentials or names a profile that doesn't
+exist. **Cause:** there is no `~/.aws/credentials` and no named
+profiles inside a Lambda container. The function's credentials come
+from its execution role, delivered through the container credential
+chain. Code that requests a specific named profile — fine on your
+workstation — has nothing to resolve against in Lambda. **Fix:** don't
+specify a profile in deployed code. `Amazon::Credentials` resolves the
+execution role's credentials from the container/IMDS chain
+automatically when you don't pin a profile (Section 10.4); let it. If
+you share code between a workstation and Lambda, make the profile
+conditional rather than hard-coded.
 
 ### 13.5 An ALB target returns 502 Bad Gateway
 
-**Symptom:** the function runs cleanly, logs success, and the load balancer still returns 502. **Cause:** ALB requires the response `statusCode` to be a JSON *integer*; a string like `"400"` is rejected and surfaces as a 502. **Fix:** return your response through the ALB base class's response helper (Section 6), which coerces the status to a number for you. If you hand-build the response hash, make sure `statusCode` is numeric (`200`, not `"200"`) — a bare `+ 0` is enough to force it.
+**Symptom:** the function runs cleanly, logs success, and the load
+balancer still returns 502. **Cause:** ALB requires the response
+`statusCode` to be a JSON *integer*; a string like `"400"` is rejected
+and surfaces as a 502. **Fix:** return your response through the ALB
+base class's response helper (Section 6), which coerces the status to
+a number for you. If you hand-build the response hash, make sure
+`statusCode` is numeric (`200`, not `"200"`) — a bare `+ 0` is enough
+to force it.
 
 ### 13.6 An ALB endpoint has no working HTTPS
 
-**Symptom:** you can't reach the function over HTTPS at the load balancer's own DNS name. **Cause:** the auto-generated `*.elb.amazonaws.com` name has no TLS certificate — AWS doesn't issue one for it. **Fix:** front the ALB with a custom domain: an ACM certificate on the HTTPS listener and a DNS record pointing your domain at the load balancer. Once the listener has a valid certificate, the listener rule ALRB created for your path works over HTTPS automatically; nothing about the function changes.
+**Symptom:** you can't reach the function over HTTPS at the load
+balancer's own DNS name. **Cause:** the auto-generated
+`*.elb.amazonaws.com` name has no TLS certificate — AWS doesn't issue
+one for it. **Fix:** front the ALB with a custom domain: an ACM
+certificate on the HTTPS listener and a DNS record pointing your
+domain at the load balancer. Once the listener has a valid
+certificate, the listener rule ALRB created for your path works over
+HTTPS automatically; nothing about the function changes.
 
 ### 13.7 SQS messages are processed more than once
 
-**Symptom:** an `s3-sqs` function reprocesses the same message, sometimes while a previous invocation is still running. **Cause:** the queue's visibility timeout is shorter than the function actually takes, so SQS makes the message visible again and redelivers it before the first invocation finishes. **Fix:** set the visibility timeout to comfortably exceed your function timeout — the rule of thumb, which `check-env-file` enforces as a warning (Section 7), is at least six times the function timeout. Independently, design the handler to be idempotent: at-least-once delivery means a duplicate is always possible, timeout tuning or not. (Relatedly, you may see `ignoring s3:TestEvent` in the logs when a bucket notification is first configured — that's the runtime discarding S3's one-time probe message, not an error.)
+**Symptom:** an `s3-sqs` function reprocesses the same message,
+sometimes while a previous invocation is still running. **Cause:** the
+queue's visibility timeout is shorter than the function actually
+takes, so SQS makes the message visible again and redelivers it before
+the first invocation finishes. **Fix:** set the visibility timeout to
+comfortably exceed your function timeout — the rule of thumb, which
+`check-env-file` enforces as a warning (Section 7), is at least six
+times the function timeout. Independently, design the handler to be
+idempotent: at-least-once delivery means a duplicate is always
+possible, timeout tuning or not. (Relatedly, you may see `ignoring
+s3:TestEvent` in the logs when a bucket notification is first
+configured — that's the runtime discarding S3's one-time probe
+message, not an error.)
 
 ## 14. Reference
 
@@ -885,11 +1706,18 @@ When something goes wrong, three habits locate almost any problem quickly. Read 
 | `overlay` / `overlay-teardown` | Build the overlay image & update the function / delete the overlay repo |
 | `log-group` / `log-group-teardown` | Create the log group & set retention / delete the log group |
 
-**Internal** (run automatically as dependencies): `image`, `tarball-validated`, `ecr-repo`, `deploy`, `image-digest`, `lambda-role`, `lambda-managed-policies`, `lambda-inline-policies`, `lambda-concurrency` (s3-sqs), `policy-document`, and the per-trigger `lambda-*-trigger` steps.
+**Internal** (run automatically as dependencies): `image`,
+`tarball-validated`, `ecr-repo`, `deploy`, `image-digest`,
+`lambda-role`, `lambda-managed-policies`, `lambda-inline-policies`,
+`lambda-concurrency` (s3-sqs), `policy-document`, and the per-trigger
+`lambda-*-trigger` steps.
 
 ### 14.2 Configuration reference (`lambda.yaml` → `lambda.env`)
 
-Every configurable field, its `lambda.yaml` path, the `lambda.env` variable it maps to, its default, whether it's required, and the trigger types it applies to. Fields with no `applies_to` apply to every type.
+Every configurable field, its `lambda.yaml` path, the `lambda.env`
+variable it maps to, its default, whether it's required, and the
+trigger types it applies to. Fields with no `applies_to` apply to
+every type.
 
 | `lambda.yaml` path | Variable | Default | Req. | Applies to |
 |---|---|---|:--:|---|
@@ -925,11 +1753,15 @@ Every configurable field, its `lambda.yaml` path, the `lambda.env` variable it m
 
 † `concurrency` is currently applied only by the `s3-sqs` pipeline (§12.5).
 
-‡ as of 1.5.0, `REPO_NAME`, `ROLE_NAME`, and `RULE_NAME` default from `FUNCTION_NAME` rather than a fixed string — redeploying an existing project without an explicit override produces new-named resources, not updated ones.
+‡ as of 1.5.0, `REPO_NAME`, `ROLE_NAME`, and `RULE_NAME` default from
+`FUNCTION_NAME` rather than a fixed string — redeploying an existing
+project without an explicit override produces new-named resources, not
+updated ones.
 
 ### 14.3 Build and CLI variables
 
-Knobs set on the `make` command line or in `lambda.env`, not part of the `lambda.yaml` schema.
+Knobs set on the `make` command line or in `lambda.env`, not part of
+the `lambda.yaml` schema.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -951,25 +1783,48 @@ Knobs set on the `make` command line or in `lambda.env`, not part of the `lambda
 
 ### 14.4 IAM permissions verified by `alr-builder check`
 
-Simulated against your *deploying* identity via `SimulatePrincipalPolicy` (§11.6):
+Simulated against your *deploying* identity via
+`SimulatePrincipalPolicy` (§11.6):
 
-- **ECR:** `CreateRepository`, `DescribeRepositories`, `GetAuthorizationToken`, `BatchCheckLayerAvailability`, `PutImage`, `InitiateLayerUpload`, `UploadLayerPart`, `CompleteLayerUpload`, `PutLifecyclePolicy`, `GetLifecyclePolicy`
-- **IAM:** `GetRole`, `CreateRole`, `AttachRolePolicy`, `PassRole`, `ListAttachedRolePolicies`
-- **Lambda:** `GetFunction`, `CreateFunction`, `UpdateFunctionCode`, `GetFunctionConfiguration`, `UpdateFunctionConfiguration`, `InvokeFunction`, `CreateEventSourceMapping`, `ListEventSourceMappings`, `GetPolicy`, `AddPermission`, `RemovePermission`, `CreateFunctionUrlConfig`, `GetFunctionUrlConfig`, `DeleteFunctionUrlConfig`
-- **SQS:** `ListQueues`, `CreateQueue` — **SNS:** `ListTopics`, `CreateTopic`, `Subscribe`, `GetTopicAttributes` — **S3:** `CreateBucket`, `ListBuckets`, `PutBucketNotificationConfiguration`
-- **EventBridge:** `DescribeRule`, `PutRule`, `PutTargets`, `RemoveTargets`, `DeleteRule`, `EnableRule`, `DisableRule` — **STS:** `GetCallerIdentity`
+- **ECR:** `CreateRepository`, `DescribeRepositories`,
+  `GetAuthorizationToken`, `BatchCheckLayerAvailability`, `PutImage`,
+  `InitiateLayerUpload`, `UploadLayerPart`, `CompleteLayerUpload`,
+  `PutLifecyclePolicy`, `GetLifecyclePolicy`
+- **IAM:** `GetRole`, `CreateRole`, `AttachRolePolicy`, `PassRole`,
+  `ListAttachedRolePolicies`
+- **Lambda:** `GetFunction`, `CreateFunction`, `UpdateFunctionCode`,
+  `GetFunctionConfiguration`, `UpdateFunctionConfiguration`,
+  `InvokeFunction`, `CreateEventSourceMapping`,
+  `ListEventSourceMappings`, `GetPolicy`, `AddPermission`,
+  `RemovePermission`, `CreateFunctionUrlConfig`,
+  `GetFunctionUrlConfig`, `DeleteFunctionUrlConfig`
+- **SQS:** `ListQueues`, `CreateQueue` — **SNS:** `ListTopics`,
+  `CreateTopic`, `Subscribe`, `GetTopicAttributes` — **S3:**
+  `CreateBucket`, `ListBuckets`, `PutBucketNotificationConfiguration`
+- **EventBridge:** `DescribeRule`, `PutRule`, `PutTargets`,
+  `RemoveTargets`, `DeleteRule`, `EnableRule`, `DisableRule` —
+  **STS:** `GetCallerIdentity`
 
-**Not simulated** (may surface at deploy time): CloudWatch Logs (`logs:*` for the log group), ELBv2 (`elasticloadbalancing:*` for ALB triggers), and the inline `iam:PutRolePolicy` used by custom policies.
+**Not simulated** (may surface at deploy time): CloudWatch Logs
+(`logs:*` for the log group), ELBv2 (`elasticloadbalancing:*` for ALB
+triggers), and the inline `iam:PutRolePolicy` used by custom policies.
 
 ### 14.5 See also
 
-The `alr-builder` POD (`perldoc Amazon::Lambda::Runtime::Builder`) documents the CLI in full; a companion document covering the internal `alr-helper` CLI is planned. For packaging the distribution ALRB deploys, see Appendix B.
+The `alr-builder` POD (`perldoc Amazon::Lambda::Runtime::Builder`)
+documents the CLI in full; a companion document covering the internal
+`alr-helper` CLI is planned. For packaging the distribution ALRB
+deploys, see Appendix B.
 
 ---
 
 # Appendix A — The rebuild matrix
 
-Section 9 explains *why* things rebuild; this is the lookup table for *what to run*. Find the thing you changed, run the command, and the listed steps rebuild (each pulling its own downstream steps along the sentinel chain). When in doubt, the universal escape hatch is at the bottom.
+Section 9 explains *why* things rebuild; this is the lookup table for
+*what to run*. Find the thing you changed, run the command, and the
+listed steps rebuild (each pulling its own downstream steps along the
+sentinel chain). When in doubt, the universal escape hatch is at the
+bottom.
 
 | You changed… | Run | What rebuilds | Cache lever |
 |---|---|---|---|
@@ -986,30 +1841,83 @@ Section 9 explains *why* things rebuild; this is the lookup table for *what to r
 | `LOG_RETENTION` | `rm .cache/<fn>/log-group && make log-group` | log-group | — |
 | Nothing — want a guaranteed clean image | `make image NOCACHE=--no-cache` | every image layer | `NOCACHE` |
 
-**Universal escape hatch.** Every step is a sentinel file under `.cache/<function-name>/`. To force *any* single step to re-run regardless of the above, delete its sentinel and run its target: `rm .cache/<fn>/<step> && make <step>`. That works because a step is "done" only while its sentinel exists (§9.2) — removing it is how you tell `make` to do that one thing again.
+**Universal escape hatch.** Every step is a sentinel file under
+`.cache/<function-name>/`. To force *any* single step to re-run
+regardless of the above, delete its sentinel and run its target: `rm
+.cache/<fn>/<step> && make <step>`. That works because a step is
+"done" only while its sentinel exists (§9.2) — removing it is how you
+tell `make` to do that one thing again.
 
 ---
 
 # Appendix B — Better together: CPAN::Maker and CPAN::Maker::Bootstrapper
 
-Section 4.4 deploys a distribution tarball and takes no position on how you build it — `Dist::Zilla`, `ExtUtils::MakeMaker`, or anything else that emits a conventional tarball works, because ALRB reads only the standard result. This appendix is for readers who'd like a build path that was designed alongside ALRB and shares its idioms end to end. Nothing here is required; it's the "if you liked how ALRB works, you'll recognize these" option.
+Section 4.4 deploys a distribution tarball and takes no position on
+how you build it — `Dist::Zilla`, `ExtUtils::MakeMaker`, or anything
+else that emits a conventional tarball works, because ALRB reads only
+the standard result. This appendix is for readers who'd like a build
+path that was designed alongside ALRB and shares its idioms end to
+end. Nothing here is required; it's the "if you liked how ALRB works,
+you'll recognize these" option.
 
-Two companion distributions, by the same author, cover the two ends ALRB doesn't:
+Two companion distributions, by the same author, cover the two ends
+ALRB doesn't:
 
-- **CPAN::Maker** turns a `buildspec.yml` — a short declaration of your module, its paths, and its dependencies — into a standard CPAN distribution tarball. It is one concrete answer to "your favorite CPAN tool" from Section 4.4: the thing that produces the artifact ALRB consumes.
-- **CPAN::Maker::Bootstrapper** scaffolds a ready-to-build project in one command (`bootstrapper -I . -i . MyApp`): a project `Makefile`, a `buildspec.yml` pre-filled from your git config, stub sources, supporting makefiles, and an immediate first build. It also *imports* existing code into a distribution and layers on development tooling.
+- **CPAN::Maker** turns a `buildspec.yml` — a short declaration of
+  your module, its paths, and its dependencies — into a standard CPAN
+  distribution tarball. It is one concrete answer to "your favorite
+  CPAN tool" from Section 4.4: the thing that produces the artifact
+  ALRB consumes.
+- **CPAN::Maker::Bootstrapper** scaffolds a ready-to-build project in
+  one command (`bootstrapper -I . -i . MyApp`): a project `Makefile`,
+  a `buildspec.yml` pre-filled from your git config, stub sources,
+  supporting makefiles, and an immediate first build. It also
+  *imports* existing code into a distribution and layers on
+  development tooling.
 
-Together they close a clean three-stage loop: **Bootstrapper** scaffolds or imports → **CPAN::Maker** builds the tarball → **ALRB** deploys it as a Lambda.
+Together they close a clean three-stage loop: **Bootstrapper**
+scaffolds or imports → **CPAN::Maker** builds the tarball → **ALRB**
+deploys it as a Lambda.
 
-**Why the seams line up.** The reason these feel like one system rather than three is that they're built from the same parts. Bootstrapper installs a project `Makefile` that includes supporting makefiles from a share directory and extends them through a `project.mk` — exactly ALRB's own layout, down to the naming. Both use `.pm.in` source templates, CLI::Simple modulinos, and sentinel-driven `make` builds. A developer who has internalized ALRB's build model from Section 9 already knows how a Bootstrapper project behaves, because the model is the same one. There is no code coupling between them — Bootstrapper doesn't know ALRB exists — but the shared design means the handoff from one to the next has no impedance.
+**Why the seams line up.** The reason these feel like one system
+rather than three is that they're built from the same
+parts. Bootstrapper installs a project `Makefile` that includes
+supporting makefiles from a share directory and extends them through a
+`project.mk` — exactly ALRB's own layout, down to the naming. Both use
+`.pm.in` source templates, CLI::Simple modulinos, and sentinel-driven
+`make` builds. A developer who has internalized ALRB's build model
+from Section 9 already knows how a Bootstrapper project behaves,
+because the model is the same one. There is no code coupling between
+them — Bootstrapper doesn't know ALRB exists — but the shared design
+means the handoff from one to the next has no impedance.
 
-Three of those seams are worth calling out because they map directly onto things earlier sections asked you to do by hand:
+Three of those seams are worth calling out because they map directly
+onto things earlier sections asked you to do by hand:
 
-- **Importing existing code is the porting story.** Bootstrapper's `-I lib -I bin` pulls loose modules and scripts into a proper distribution — which is precisely the "turn a daemon or script into a handler" move from Sections 1 and 6. Bootstrapper makes it a distribution; ALRB makes that distribution a Lambda.
-- **Dependency scanning feeds ALRB's cpanfile.** Bootstrapper scans your sources for prerequisites and records them in the distribution's metadata. That metadata is exactly what ALRB reads to generate the image's `cpanfile` (Section 10.1) — so the dependency list ALRB installs is maintained for you upstream rather than by hand.
-- **A shared DarkPAN closes the loop.** If you publish your own distributions to a DarkPAN, the modules CPAN::Maker builds and the modules ALRB resolves against (via `RESOLVER`, Section 10.2) are the same mirror — private code flows from build to deployed image without a detour through public CPAN.
+- **Importing existing code is the porting story.** Bootstrapper's `-I
+  lib -I bin` pulls loose modules and scripts into a proper
+  distribution — which is precisely the "turn a daemon or script into
+  a handler" move from Sections 1 and 6. Bootstrapper makes it a
+  distribution; ALRB makes that distribution a Lambda.
+- **Dependency scanning feeds ALRB's cpanfile.** Bootstrapper scans
+  your sources for prerequisites and records them in the
+  distribution's metadata. That metadata is exactly what ALRB reads to
+  generate the image's `cpanfile` (Section 10.1) — so the dependency
+  list ALRB installs is maintained for you upstream rather than by
+  hand.
+- **A shared DarkPAN closes the loop.** If you publish your own
+  distributions to a DarkPAN, the modules CPAN::Maker builds and the
+  modules ALRB resolves against (via `RESOLVER`, Section 10.2) are the
+  same mirror — private code flows from build to deployed image
+  without a detour through public CPAN.
 
-Beyond the build, Bootstrapper adds development tooling that's orthogonal to ALRB but pleasant to have in the same workflow — quality gates (syntax and `perlcritic` checks wired into the build), AI-assisted code review, POD review and generation, and generated release notes via the Anthropic API. None of it touches deployment; it just means the distribution you eventually hand to ALRB was built, checked, and documented in one consistent place.
+Beyond the build, Bootstrapper adds development tooling that's
+orthogonal to ALRB but pleasant to have in the same workflow — quality
+gates (syntax and `perlcritic` checks wired into the build),
+AI-assisted code review, POD review and generation, and generated
+release notes via the Anthropic API. None of it touches deployment; it
+just means the distribution you eventually hand to ALRB was built,
+checked, and documented in one consistent place.
 
 **Where to look.** `perldoc CPAN::Maker::Bootstrapper` for the
 scaffolding, import, and review workflow; `perldoc CPAN::Maker` for

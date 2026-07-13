@@ -4,6 +4,7 @@ use CLI::Simple::Constants qw(:booleans);
 use CLI::Simple::Utils qw(slurp_json);
 use English qw(-no_match_vars);
 use File::Which qw(which);
+use Scalar::Util qw(blessed);
 
 use Role::Tiny;
 
@@ -70,7 +71,12 @@ sub cmd_dep_check {
     }
     else {
       if ($EVAL_ERROR) {
-        $logger->error( 'ERROR checking permissions...' . $EVAL_ERROR );
+        if ( blessed $EVAL_ERROR && $EVAL_ERROR->get_error eq '403' ) {
+          $logger->error('ERROR: You do not have permissions for IAM API calls!');
+        }
+        else {
+          $logger->error( 'ERROR: Unable to determine if you have IAM permisssion!' . $EVAL_ERROR );
+        }
       }
       else {
         $logger->info('some required IAM permissions are NOT allowed!');
@@ -206,7 +212,7 @@ sub _check_iam_permissions {
 
       my ( $service, $action ) = split /[:]/xsm, $r->{EvalActionName};
       my $status = $r->{EvalDecision};
-      $logger->info( sprintf 'checking IAM permission: "%s"...%s', $p, $status );
+      $logger->info( sprintf 'checking IAM permission: "%s"...%s', $r->{EvalActionName}, $status );
       next if $status eq 'allowed';
       $iam_permissions_ok = $FALSE;
       $logger->info( sprintf 'required permission [%s] not allowed...status: [%s]', $p, $status );

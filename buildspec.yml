@@ -43,7 +43,7 @@ extra-files:
       - share/payload-s3-direct.json
       - share/payload-alb.json
       - share/payload.json
-      - share/policies
+      - share/policies.json
       - share/help.mk
       - share/s3.mk
       - share/sns.mk

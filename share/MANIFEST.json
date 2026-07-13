@@ -1,6 +1,5 @@
 {
     "files": {
-        "policies" : { "dest": "policies", "overwrite": "never" },
         "Makefile.builder": { "dest": "Makefile.builder", "overwrite": "always" }
     },
     "templates": [

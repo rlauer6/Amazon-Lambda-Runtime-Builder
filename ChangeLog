@@ -1,8 +1,47 @@
+Mon Jul 13 09:31:30 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.5.1]:
+	* README.md: generated
+	* VERSION: bump
+	* release-notes.md: updated
+	* release-notes/release-notes-1.5.1.md: new
+	* requires: Class::Accessor::Fast
+	* cpanfile: likewise
+	* share/policies.json: renamed
+	* GETTING-STARTED.md: mostly formatting changes
+	* lib/Amazon/Lambda/Runtime/Builder.pm.in
+	- +$LOG4PERL_CONF for colored output
+	- remove note re: OPTIONAL DEPENDENCIES
+	(init_logger)
+	- new, override CLI::Simple::init_logger for optionally adding log4per configuration
+	* lib/Amazon/Lambda/Runtime/Builder/Role/CheckDeps.pm.in
+	(cmd_dep_check)
+	- trap IAM permission error
+	(_check_iam_permissions): clearer error message
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Install.pm.in
+	- replace some die's with ->error / return $FAILURE pattern
+	(cmd_install)
+	- accept list of extra permissions to enable
+	- validate permission list
+	- write policies file based on trigger type and permission list (new)
+	* share/MANIFEST.json: remove policies, now generated dynamically
+	* share/S3.pm.tmpl
+	- use Amazon::S3::Lite (because it's lighter)
+	(on_s3_event)
+	- use Amazon::S3::Lite methods
+	* share/policies.json: modified
+	* share/s3.mk
+	- make target files rw first
+	- add telemetry
+	
+	* lib/Amazon/Lambda/Runtime/Builder/Policies.pm.in: new
+	* buildspec.yml: add above to build
+
 Fri Jul 10 16:20:54 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.5.0]:
 	* release-notes.md: updated
-	* release-notes/release-notes-1.4.0.md: new
+	* release-notes/release-notes-1.5.0.md: new
 	* VERSION: bump
 	* GETTING-STARTED.md: update walkthrough using new commands
 	* lib/Amazon/Lambda/Runtime/Builder.pm.in

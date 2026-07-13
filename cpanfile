@@ -16,6 +16,7 @@ requires "CLI::Simple::Constants", "0";
 requires "CLI::Simple::Utils", "0";
 requires "CPAN::Meta", "2.150010";
 requires "Carp::Always", "0.16";
+requires "Class::Accessor::Fast", "0.51";
 requires "Data::NestedKey", "1.2.1";
 requires "Data::UUID", "1.227";
 requires "File::ShareDir", "1.118";

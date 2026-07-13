@@ -26,7 +26,21 @@ with 'Amazon::Lambda::Runtime::Builder::Role::CheckDeps';
 with 'Amazon::Lambda::Runtime::Builder::Role::Config';
 with 'Amazon::Lambda::Runtime::Builder::Role::Install';
 
-__PACKAGE__->use_log4perl( level => 'info' );
+Readonly::Scalar our $LOG4PERL_CONF => <<'END_OF_CONF';
+log4perl.logger = INFO, Screen
+log4perl.appender.Screen = Log::Log4perl::Appender::ScreenColoredLevels
+log4perl.appender.Screen.stderr = 1
+log4perl.appender.Screen.layout = Log::Log4perl::Layout::PatternLayout
+log4perl.appender.Screen.layout.ConversionPattern = [%d] %m%n
+log4perl.appender.Screen.color.DEBUG=magenta
+log4perl.appender.Screen.color.INFO=green
+log4perl.appender.Screen.color.WARN=yellow
+log4perl.appender.Screen.color.ERROR=red
+log4perl.appender.Screen.color.FATAL=bold red
+log4perl.appender.Screen.color.TRACE=bold white
+END_OF_CONF
+
+__PACKAGE__->use_log4perl( level => 'info', config => $LOG4PERL_CONF );
 
 our $VERSION = '@PACKAGE_VERSION@';
 
@@ -67,6 +81,18 @@ sub init {
   }
 
   return;
+}
+
+########################################################################
+sub init_logger {
+########################################################################
+  my ($self) = @_;
+
+  if ( !$self->get_color ) {
+    $self->set_log4perl_conf(undef);
+  }
+
+  return $self->SUPER::init_logger;
 }
 
 ########################################################################
@@ -1439,28 +1465,12 @@ reads) beyond the create-and-list actions above.
 =head3 Handler Runtime Permissions
 
 C<AWSLambdaBasicExecutionRole> covers CloudWatch logging only. Any AWS
-APIs your handler calls directly require additional policies - via the
-C<policies> file (managed) or C<custom-policies.json> (inline). For
-example, a handler that reads S3 objects needs C<AmazonS3ReadOnlyAccess> or
-an equivalent scoped policy even if its trigger is an S3 event -
-the trigger and the API access are governed by separate policies.
-
-=head1 OPTIONAL DEPENDENCIES
-
-IAM permission checking in C<check> requires:
-
-=over 4
-
-=item * L<Amazon::API::IAM>
-
-=item * L<Amazon::API::STS>
-
-=item * L<Amazon::Credentials>
-
-=back
-
-These are not hard dependencies - the tool is fully functional without
-them, but C<check> will only verify system tools.
+APIs your handler calls directly need additional policies. C<install>
+writes a C<policies> file pre-populated for your trigger type; for
+anything a managed policy doesn't cover, or where you want tighter,
+resource-scoped permissions, add a hand-written IAM policy document as
+C<custom-policies.json> and it's applied as an inline role policy
+alongside the managed ones.
 
 =head1 SEE ALSO
 

@@ -10,6 +10,7 @@ use File::Basename qw(dirname basename);
 use File::Copy;
 use File::Find;
 use File::Path qw(make_path);
+use List::Util qw(none);
 use Role::Tiny;
 
 ########################################################################
@@ -17,7 +18,7 @@ sub cmd_install {
 ########################################################################
   my ($self) = @_;
 
-  my ( $app_name, $trigger_type ) = $self->get_args;
+  my ( $app_name, $trigger_type, @extra_permissions ) = $self->get_args;
 
   die "ERROR: usage: alr-builder install app-name\n"
     if !$app_name;
@@ -65,26 +66,28 @@ sub cmd_install {
 
     if ( -e "$install_dir/$dest" ) {
       if ( $overwrite eq 'never' ) {
-        $self->get_logger->info("$dest exists - leaving as-is (customized template)");
+        $self->get_logger->warn("$dest exists - leaving as-is (customized template)");
         next;
       }
       elsif ( $overwrite ne 'always' ) {
-        die "ERROR: $install_dir/$dest exists...use --force\n"
-          if !$self->get_force;
+        if ( !$self->get_force ) {
+          $self->logger->error("$install_dir/$dest exists...use --force\n");
+          return $FAILURE;
+        }
       }
     }
 
     $self->get_logger->info( sprintf 'copying %s -> %s', $src, "$install_dir/$dest" );
 
     copy( $src, "$install_dir/$dest" )
-      or warn "WARNING: could not copy $src to $install_dir/$dest\n";
+      or $self->get_logger->warn("WARNING: could not copy $src to $install_dir/$dest\n");
   }
 
   # update or install project.mk with builder stub
   if ( !-e "$install_dir/project.mk" ) {
     my $src = sprintf '%s/builder.stub', $dist_dir;
     copy( $src, "$install_dir/project.mk" )
-      or warn "WARNING: could not copy builder.stub to $install_dir/project.mk\n";
+      or $self->get_logger->warn("WARNING: could not copy builder.stub to $install_dir/project.mk\n");
   }
   else {
     my $project_mk_src = slurp("$install_dir/project.mk");
@@ -100,11 +103,16 @@ sub cmd_install {
 
       rename "$install_dir/project.mk", "$install_dir/project.mk.bak";
 
-      die "ERROR: could not create a backup for project.mk, builder targets not installed\n"
-        if !-e "$install_dir/project.mk.bak";
+      if ( !-e "$install_dir/project.mk.bak" ) {
+        $self->get_logger->error("ERROR: Could not create a backup for project.mk, builder targets not installed\n");
+        return $FAILURE;
+      }
 
       open my $fh, '>', "$install_dir/project.mk"
-        or die "ERROR: could not open $install_dir/project.mk for updating\n$OS_ERROR";
+        or do {
+        $self->get_logger->error("ERROR: could not open $install_dir/project.mk for updating\n$OS_ERROR");
+        return $FAILURE;
+        };
 
       print {$fh} $project_mk_src;
 
@@ -112,19 +120,54 @@ sub cmd_install {
     }
   }
 
-  my @templates = @{ $manifest->{templates} };
-
   if ( !$trigger_type ) {
     $trigger_type //= 'eventbridge';
-    $self->get_logger->info( sprintf 'no trigger type specified...using default: %s', $trigger_type );
+    $self->get_logger->warn( sprintf 'no trigger type specified...using default: %s', $trigger_type );
   }
+
+  require Amazon::Lambda::Runtime::Builder::Policies;
+
+  my @valid_services = Amazon::Lambda::Runtime::Builder::Policies->valid_services;
+
+  my %extra;
+
+  foreach (@extra_permissions) {
+    my ( $service, $access_type ) = split /[:]/xsm, $_;
+    if ( !$access_type || none { $access_type eq $_ } qw(ro full) ) {
+      $self->get_logger->error('ERROR: invalid permission: use service:ro|full');
+      return $FAILURE;
+    }
+
+    if ( none { $service eq $_ } @valid_services ) {
+      $self->get_logger->error( sprintf 'ERROR: invalid service: must be one of %s', join q{,}, @valid_services );
+      return $FAILURE;
+    }
+
+    $extra{$service} = $access_type eq 'full' ? $TRUE : $FALSE;
+  }
+
+  my $policies = eval { Amazon::Lambda::Runtime::Builder::Policies->new( trigger_type => $trigger_type, outfile => 'policies',
+      %extra, ); };
+
+  if ( !$policies ) {
+    $self->get_logger->error("ERROR: could not create policies file\n$EVAL_ERROR");
+    return $FAILURE;
+  }
+
+  $policies->write_policies;
+
+  $self->get_logger->warn('See the `policies` file to view or edit the list of managed policies');
+  $self->get_logger->warn( sprintf 'that have been enabled for this trigger type (%s)', $trigger_type );
+  $self->get_logger->info('Installation complete...installed assets:');
+
+  my @templates = @{ $manifest->{templates} };
 
   foreach my $tmpl (@templates) {
     my $content = slurp( sprintf '%s/%s', $dist_dir, basename($tmpl) );
     $content =~ s/[@]app_name[@]/$app_name/xsmg;
 
     if ( $tmpl =~ /Handler/xsm ) {
-      foreach my $type (qw(alb eventbridge sns s3-direct s3-sqs)) {
+      foreach my $type ( @{ $policies->get_valid_trigger_types } ) {
         my $mark = $trigger_type eq $type ? q{ } : q{# };
         $content =~ s/[@]$type[@]/$mark/xsmg;
       }
@@ -145,7 +188,10 @@ sub cmd_install {
     $self->get_logger->info( sprintf 'writing %s...', $dest_path );
 
     open my $fh, '>', $dest_path
-      or die "ERROR: could not open $dest_path for writing\n$OS_ERROR";
+      or do {
+      $self->get_logger->error("ERROR: could not open $dest_path for writing\n$OS_ERROR");
+      return $FAILURE;
+      };
 
     print {$fh} $content;
 
@@ -156,8 +202,11 @@ sub cmd_install {
 
     my $src = sprintf '%s/lambda-%s.yaml', $install_dir, $trigger_type // 'eventbridge';
 
-    die "ERROR: invalid trigger type: only types `alb`, `eventbridge`, `s3-direct`, `s3-sqs`, `sns` are supported\n"
-      if !-e $src;
+    if ( !-e $src ) {
+      $self->get_logger->error( sprintf "ERROR: invalid trigger type: only types  %s\n",
+        join q{,}, @{ $policies->get_valid_trigger_types } );
+      return $FAILURE;
+    }
 
     $self->get_logger->info( sprintf 'trigger type: %s. Installing to %s', $trigger_type, 'lambda.yaml' );
 
@@ -165,8 +214,6 @@ sub cmd_install {
 
     copy( $src, $dest );
   }
-
-  $self->get_logger->info('Installation complete...installed assets:');
 
   $self->tree($install_dir);
 

@@ -37,7 +37,6 @@
     * [SQS / SNS / S3 / EventBridge / STS](#sqs--sns--s3--eventbridge--sts)
     * [Additional permissions (not verified by check)](#additional-permissions-not-verified-by-check)
     * [Handler Runtime Permissions](#handler-runtime-permissions)
-* [OPTIONAL DEPENDENCIES](#optional-dependencies)
 * [SEE ALSO](#see-also)
 * [AUTHOR](#author)
 * [LICENSE](#license)
@@ -917,22 +916,12 @@ reads) beyond the create-and-list actions above.
 ### Handler Runtime Permissions
 
 `AWSLambdaBasicExecutionRole` covers CloudWatch logging only. Any AWS
-APIs your handler calls directly require additional policies - via the
-`policies` file (managed) or `custom-policies.json` (inline). For
-example, a handler that reads S3 objects needs `AmazonS3ReadOnlyAccess` or
-an equivalent scoped policy even if its trigger is an S3 event -
-the trigger and the API access are governed by separate policies.
-
-# OPTIONAL DEPENDENCIES
-
-IAM permission checking in `check` requires:
-
-- [Amazon::API::IAM](https://metacpan.org/pod/Amazon%3A%3AAPI%3A%3AIAM)
-- [Amazon::API::STS](https://metacpan.org/pod/Amazon%3A%3AAPI%3A%3ASTS)
-- [Amazon::Credentials](https://metacpan.org/pod/Amazon%3A%3ACredentials)
-
-These are not hard dependencies - the tool is fully functional without
-them, but `check` will only verify system tools.
+APIs your handler calls directly need additional policies. `install`
+writes a `policies` file pre-populated for your trigger type; for
+anything a managed policy doesn't cover, or where you want tighter,
+resource-scoped permissions, add a hand-written IAM policy document as
+`custom-policies.json` and it's applied as an inline role policy
+alongside the managed ones.
 
 # SEE ALSO
 
