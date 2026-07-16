@@ -39,9 +39,6 @@ mapping:
     env: ROLE_NAME
     default: @FUNCTION_NAME@-role
 
-  - yaml: role.profile
-    env: ROLE_PROFILE
-
   - yaml: trigger.type
     env: TRIGGER_TYPE
     required: true

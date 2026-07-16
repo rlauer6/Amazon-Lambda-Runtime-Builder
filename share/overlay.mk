@@ -1,5 +1,8 @@
+#-*- mode: makefile; -*-
+
 $(CACHE_DIR)/overlay: $(CACHE_DIR)/image $(wildcard Dockerfile) | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
 	chmod -f 644 $(CACHE_DIR)/overlay-ecr-repo 2>/dev/null || true; \
 	test -e Dockerfile || { \
 	    echo "ERROR: no Dockerfile found in $(CURDIR)" >&2; exit 1; \
@@ -12,20 +15,27 @@ $(CACHE_DIR)/overlay: $(CACHE_DIR)/image $(wildcard Dockerfile) | $(CACHE_DIR)
 	    overlay_uri="$$(alr-helper create-repository $(OVERLAY) filter=repository.repositoryUri)"; \
 	fi; \
 	echo "$$overlay_uri" > $(CACHE_DIR)/overlay-ecr-repo && chmod 444 $(CACHE_DIR)/overlay-ecr-repo; \
+	alr-helper report-step docker-build start; \
 	docker build $(NOCACHE) -t $(OVERLAY) . || exit 1; \
+	alr-helper report-step docker-build ok; \
 	docker tag $(OVERLAY):latest $$overlay_uri:latest; \
+	alr-helper report-step docker-push start; \
 	docker push $$overlay_uri:latest || exit 1; \
+	alr-helper report-step docker-push ok; \
 	DIGEST="$$(alr-helper describe-images $(OVERLAY) filter=imageDigest)"; \
-	alr-helper update-function $(FUNCTION_NAME) $$overlay_uri $$DIGEST && \
+	alr-helper --report-step $@ update-function $(FUNCTION_NAME) $$overlay_uri $$DIGEST && \
 	echo "$$overlay_uri@$$DIGEST" > $@ && chmod 444 $@
+	alr-helper report-step $@ done ok
 
 .PHONY: overlay
 overlay: $(CACHE_DIR)/overlay ## build overlay image and update Lambda function
 
 .PHONY: overlay-teardown
 overlay-teardown: ## delete overlay ECR repo and clear sentinels
-	$(NO_ECHO)overlay_uri="$$(cat $(CACHE_DIR)/overlay-ecr-repo 2>/dev/null)"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	overlay_uri="$$(cat $(CACHE_DIR)/overlay-ecr-repo 2>/dev/null)"; \
 	if [[ -n "$$overlay_uri" ]]; then \
-	    alr-helper delete-repository $(OVERLAY) || true; \
+	    alr-helper --report-step $@ delete-repository $(OVERLAY) || true; \
 	fi; \
 	rm -f $(CACHE_DIR)/overlay $(CACHE_DIR)/overlay-ecr-repo
+	alr-helper report-step $@ done ok; \

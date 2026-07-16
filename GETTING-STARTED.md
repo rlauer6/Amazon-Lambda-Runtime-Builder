@@ -118,25 +118,77 @@ driver (`plambda.pl`) that loads your handler and the base image
 own dependencies. Your responsibility stops at the handler; everything
 beneath it is machinery ALR already ships.
 
-Your *handler* is an ordinary Perl class. ALR inspects each incoming event, works out what kind it is, and calls the matching method on your handler — `on_message` for an SQS message, `on_s3_event` for an S3 notification, and so on — so you write logic only for the events you care about and ignore the rest. In configuration this class is named by `HANDLER_CLASS`, and the container loads it by that name at startup. That is the whole contract for now; Section 6 covers it in full.
+Your *handler* is an ordinary Perl class. ALR inspects each incoming
+event, works out what kind it is, and calls the matching method on
+your handler — `on_message` for an SQS message, `on_s3_event` for an
+S3 notification, and so on — so you write logic only for the events
+you care about and ignore the rest. In configuration this class is
+named by `HANDLER_CLASS`, and the container loads it by that name at
+startup. That is the whole contract for now; Section 6 covers it in
+full.
 
-Nothing invokes a Lambda on its own; something has to deliver an event, and that something is the *trigger* (or event source). It is the serverless replacement for the loop a daemon used to run itself: a process that polled a queue becomes an SQS trigger, a watcher waiting on files becomes an S3 trigger, a cron job becomes an EventBridge schedule, a topic fan-out becomes SNS, and an HTTP path on a load balancer becomes ALB. You choose one with a single value, `TRIGGER_TYPE`, and ALRB wires the AWS side of it to your function. Section 8 takes the five types one at a time.
+Nothing invokes a Lambda on its own; something has to deliver an
+event, and that something is the *trigger* (or event source). It is
+the serverless replacement for the loop a daemon used to run itself: a
+process that polled a queue becomes an SQS trigger, a watcher waiting
+on files becomes an S3 trigger, a cron job becomes an EventBridge
+schedule, a topic fan-out becomes SNS, and an HTTP path on a load
+balancer becomes ALB. You choose one with a single value,
+`TRIGGER_TYPE`, and ALRB wires the AWS side of it to your
+function. Section 8 takes the five types one at a time.
 
-Between "a container image on your laptop" and "a running function wired to an event source" sits a short list of AWS resources, and it helps to recognize their names before you watch them scroll past. The image has to live somewhere Lambda can pull it from — that is **ECR**, the Elastic Container Registry. The function runs under an *execution role* — an **IAM** identity that declares what the function is permitted to do — to which *policies* are attached. There is the **Lambda function** itself, and a **CloudWatch log group** where its output lands. ALRB creates each of these for you and you rarely touch them directly, but when something misbehaves it is usually one of them, so knowing them by name is worth the paragraph.
+Between "a container image on your laptop" and "a running function
+wired to an event source" sits a short list of AWS resources, and it
+helps to recognize their names before you watch them scroll past. The
+image has to live somewhere Lambda can pull it from — that is **ECR**,
+the Elastic Container Registry. The function runs under an *execution
+role* — an **IAM** identity that declares what the function is
+permitted to do — to which *policies* are attached. There is the
+**Lambda function** itself, and a **CloudWatch log group** where its
+output lands. ALRB creates each of these for you and you rarely touch
+them directly, but when something misbehaves it is usually one of
+them, so knowing them by name is worth the paragraph.
 
-All of that provisioning is driven by `make`. Each step — build the image, push it to ECR, create the role, attach policies, create the function, wire the trigger — is an ordinary target, and `make lambda-pipeline` walks the whole chain in order. What makes that chain safe to re-run is a single idea worth holding onto: every step records its completion as a *sentinel* file on disk, and a step counts as done until its sentinel is removed. Re-running the pipeline skips whatever is already finished, so there is no penalty for running it twice; and when you deliberately want to redo a step, you invalidate its sentinel and `make` rebuilds exactly that step and whatever depends on it. That one mechanism — *done until invalidated* — is what makes the framework safe to poke at, and it is the same mechanism Section 9 leans on when the question becomes "I changed one thing; what has to be rebuilt?"
+Normally you'll kick off a build with `alr-builder build-lambba`, but
+under the hood all of that provisioning is driven by `make`. Each step
+— build the image, push it to ECR, create the role, attach policies,
+create the function, wire the trigger — is an ordinary target, and
+`make lambda-pipeline` walks the whole chain in order. What makes that
+chain safe to re-run is a single idea worth holding onto: every step
+records its completion as a *sentinel* file on disk, and a step counts
+as done until its sentinel is removed. Re-running the pipeline skips
+whatever is already finished, so there is no penalty for running it
+twice; and when you deliberately want to redo a step, you invalidate
+its sentinel and `make` rebuilds exactly that step and whatever
+depends on it. That one mechanism — *done until invalidated* — is what
+makes the framework safe to poke at, and it is the same mechanism
+Section 9 leans on when the question becomes "I changed one thing;
+what has to be rebuilt?"
 
-With that vocabulary in hand — image and bootstrap, handler, trigger, the AWS resources, and the `make`-and-sentinel pipeline — the commands in the sections ahead should read as steps you understand rather than incantations. Next: the handful of tools and credentials to have in place before you begin.
+With that vocabulary in hand — image and bootstrap, handler, trigger,
+the AWS resources, and the `make`-and-sentinel pipeline — the commands
+in the sections ahead should read as steps you understand rather than
+incantations. Next: the handful of tools and credentials to have in
+place before you begin.
 
 ## 3. Before you begin
 
-ALRB orchestrates other tools rather than replacing them, so a short list of things needs to be in place before your first build. None of it is exotic; most of it you likely already have.
+ALRB orchestrates other tools rather than replacing them, so a short
+list of things needs to be in place before your first build. None of
+it is exotic; most of it you likely already have.
 
-**A Perl you can install modules into.** You need a Perl toolchain and a CPAN client to install the framework itself — `cpanm`, `cpm`, or whatever you already use. `cpm` (`App::cpm`) is not something you need locally: the image build fetches and installs its own copy of `cpm` inside the container, so dependency resolution for your handler happens entirely in the Docker build, not on your machine.
+**A local Perl and CPAN client.** You need a Perl toolchain and a CPAN
+client to install the framework itself - `cpanm`, `cpm`, or whatever you
+already use.
 
-**Docker.** The handler is a container image, so a working Docker (a running daemon and a `docker` you can invoke) is non-negotiable. ALRB shells out to `docker build` and `docker push`; it doesn't wrap or hide it.
 
-**`make`.** GNU `make` drives the whole pipeline. Any reasonably current version is fine.
+**Docker.** The handler is a container image, so a working Docker (a
+running daemon and a `docker` you can invoke) is non-negotiable. ALRB
+shells out to `docker build` and `docker push`; it doesn't wrap or
+hide it.
+
+**`make`.** GNU `make` drives the whole pipeline. Any reasonably
+current version is fine.
 
 **AWS credentials the tools can find.** This is the one prerequisite
 worth a second sentence for a reader who lives more in Perl than in
@@ -156,6 +208,14 @@ needs a specific set of permissions — and Section 11 covers that in
 full; for now, credentials that resolve are enough to proceed, and the
 check below will tell you whether they carry the permissions you'll
 need.
+
+**Standard Unix command-line tools.** ALRB's build pipeline is
+`bash`-and-coreutils under the hood - it shells out to `bash` itself
+(not just any POSIX shell; the framework's Makefiles set
+C<SHELL := /bin/bash> explicitly), plus `sed`, `chmod`, `cp`, and `rm`.
+All of this is already present on any Linux or macOS machine. There's no
+Windows support - the pipeline won't run under native Windows at all;
+WSL, being a real Linux environment, should work.
 
 **Install the framework:**
 
@@ -229,7 +289,8 @@ you touch them:
 - **`policies`** — the AWS managed-policy ARNs attached to your
   function's execution role. The default entry grants CloudWatch
   logging, which is all this function needs.
-- **`Makefile.builder`** — the build engine. You don't edit it; it pulls in the framework's machinery from the installed distribution.
+- **`Makefile.builder`** — the build engine. You don't edit it; it
+  pulls in the framework's machinery from the installed distribution.
 - **`project.mk`** — the file your own `Makefile` includes to expose
   the `make` targets you'll run. (If you already had a `project.mk`,
   ALRB appends its section and leaves a `.bak` backup.)
@@ -1226,13 +1287,24 @@ your Lambda images install from.
 
 > **Sidebar — Why `cpm`, not `cpanm`?**
 >
-> ALRB installs dependencies *inside the image* with `cpm` (`App::cpm`) rather than the more familiar `cpanm`. Three reasons drove that choice:
+> ALRB installs dependencies *inside the image* with `cpm`
+> (`App::cpm`) rather than the more familiar `cpanm`. Three reasons
+> drove that choice:
 >
-> - **Speed.** `cpm` resolves and installs in parallel and, depending on your build hardware and configuration, can be substantially faster than `cpanm` — and every image build pays the dependency-install cost.
-> - **Active maintenance.** Its author maintains `cpm` aggressively as a modern replacement for `cpanm`, so it tracks current CPAN and toolchain behavior closely.
-> - **Cleaner DarkPAN handling.** For resolving against a private mirror (above), `cpm`'s resolver model is — in our view — more robust and less confusing than `cpanm`'s overlapping `--mirror` and `--mirror-only` options.
+> - **Speed.** `cpm` resolves and installs in parallel and, depending
+>   on your build hardware and configuration, can be substantially
+>   faster than `cpanm` — and every image build pays the
+>   dependency-install cost.  - **Active maintenance.** Its author
+>   maintains `cpm` aggressively as a modern replacement for `cpanm`,
+>   so it tracks current CPAN and toolchain behavior closely.  -
+>   **Cleaner DarkPAN handling.** For resolving against a private
+>   mirror (above), `cpm`'s resolver model is — in our view — more
+>   robust and less confusing than `cpanm`'s overlapping `--mirror`
+>   and `--mirror-only` options.
 >
-> None of this constrains *you*: for installing the framework or your own modules locally, use whatever you prefer (§3). The choice is specifically about the tool that runs inside the image build.
+> None of this constrains *you*: for installing the framework or your
+> own modules locally, use whatever you prefer (§3). The choice is
+> specifically about the tool that runs inside the image build.
 
 ### 10.3 System libraries and XS modules
 
@@ -1335,35 +1407,26 @@ execution role*, added as a policy here. The trigger and the API
 access are two doors, and the pipeline only opens the one that lets
 the event in.
 
-### 11.3 Managed policies: the `policies` file or a profile
+### 11.3 Managed policies: the `policies` file
 
 AWS managed policies — the broad, AWS-maintained permission sets — are
-the usual way to grant a function what it needs, and ALRB gives you
-two ways to attach them. They're mutually exclusive: one or the other,
-not both.
+the usual way to grant a function what it needs, and ALRB will
+automatically attach managed policies found in the `policies` file to
+you Lambda role.
 
-The default is the **`policies` file** in your project
-(`POLICIES_FILE`, default `policies`): a plain list of managed-policy
-ARNs, one per line, with `#` comments. The scaffold ships it with
-CloudWatch logging enabled and a menu of common grants commented out,
-ready to uncomment:
+The **`policies` file** in your project (`POLICIES_FILE`, default
+`policies`) is a plain list of managed-policy ARNs, one per line, with
+`#` comments. The `install` command will create an appropriate version
+of uncommented policies based on the trigger type. Uncomment
+additional policies according to your needs.
 
 ```
 # Basic Lambda execution (CloudWatch logging) - required
 arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
 # S3 access
-# arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
 ```
-
-The alternative is a **profile** (`ROLE_PROFILE`): the name of a
-predefined bundle in the framework's `profiles.yml`, each a curated
-list of managed policies for a common shape of function — `basic`
-(logging only), `s3-read`, `s3-sqs`, `s3`, `eventbridge`. Set
-`ROLE_PROFILE: s3-read` and the role gets logging plus S3 read without
-your hand-listing ARNs. If `ROLE_PROFILE` is unset, a `policies` file
-must exist (ALRB errors if neither is present); if it's set, the
-profile's list is used instead of the file.
 
 ### 11.4 Inline custom policies: scoping to a resource
 
@@ -1447,6 +1510,12 @@ every "update" target works by invalidating one sentinel and letting
 Change your handler, rebuild your distribution tarball, and run:
 
 ```
+alr-builder build
+```
+
+or
+
+```
 make update-function
 ```
 
@@ -1463,6 +1532,10 @@ a new tarball, not the command.
 
 To change memory or timeout, edit `lambda.yaml` (or `lambda.env`) and
 force the configuration step:
+
+```
+alr-builder build
+```
 
 ```
 make update-lambda-configuration
@@ -1539,8 +1612,8 @@ instead.
 
 ### 12.7 Tearing down versus cleaning
 
-Two commands look similar and do very different things. `make
-lambda-teardown` removes the deployed **AWS resources** — the
+Two commands look similar and do very different things. `alr-builder
+teardown` or `make lambda-teardown` removes the deployed **AWS resources** — the
 function, role, trigger wiring, log group — dispatched by trigger type
 and conservative about shared or stateful resources (Section 8):
 buckets, SNS topics, and your ALB survive. `make clean`, by contrast,

@@ -21,20 +21,24 @@ LOG_RETENTION ?= 1
 ########################################################################
 $(CACHE_DIR)/log-group: $(CACHE_DIR)/lambda-function | $(CACHE_DIR)
 ########################################################################
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
 	log_group="/aws/lambda/$(FUNCTION_NAME)"; \
-	existing="$$(alr-helper describe-log-groups $$log_group filter=logGroups[0].arn 2>/dev/null)"; \
+	existing="$$(alr-helper --report-step $@ describe-log-groups $$log_group filter=logGroups[0].arn 2>/dev/null)"; \
 	if [[ -z "$$existing" ]]; then \
-	    alr-helper create-log-group $$log_group || exit 1; \
+	    alr-helper --report-step $@ create-log-group $$log_group || exit 1; \
 	fi; \
-	alr-helper put-retention-policy $$log_group $(LOG_RETENTION) || exit 1; \
+	alr-helper --report-step $@ put-retention-policy $$log_group $(LOG_RETENTION) || exit 1; \
 	echo "$(LOG_RETENTION)" > $@ && chmod 444 $@
+	alr-helper report-step $@ done ok
 
 .PHONY: log-group
 log-group: $(CACHE_DIR)/log-group ## create Lambda log group and set retention policy
 
 .PHONY: log-group-teardown
 log-group-teardown: ## delete Lambda CloudWatch log group
-	$(NO_ECHO)alr-helper delete-log-group /aws/lambda/$(FUNCTION_NAME) || true; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	alr-helper --report-step $@ delete-log-group /aws/lambda/$(FUNCTION_NAME) || true; \
 	chmod -f 644 $(CACHE_DIR)/log-group 2>/dev/null || true; \
 	rm -f $(CACHE_DIR)/log-group
+	alr-helper report-step $@ done ok

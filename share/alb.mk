@@ -12,23 +12,32 @@
 #        RULE_PRIORITY=10 \
 #        lambda-alb-pipeline
 #
+#   ALB_HOST may optionally be set to additionally restrict the rule
+#   to a specific Host header (e.g. ALB_HOST=sandbox.example.com),
+#   combined with ALB_PATH via AND. Omit ALB_PATH to match any path
+#   under that host.
+#
 # Teardown:
 #   make lambda-alb-teardown
 ########################################################################
 
 LISTENER_ARN  ?=
 ALB_PATH      ?= /build
+ALB_HOST      ?=
 RULE_PRIORITY ?= 999
+
+ALB_CONDITIONS := $(if $(ALB_PATH),path:$(ALB_PATH)) $(if $(ALB_HOST),host:$(ALB_HOST))
 
 ########################################################################
 # grant ALB permission to invoke the Lambda function
 ########################################################################
 $(CACHE_DIR)/alb-lambda-permission: $(CACHE_DIR)/lambda-function | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
-	permission="$$(alr-helper get-lambda-policy $(FUNCTION_NAME) 2>&1 || true)"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
+	permission="$$(alr-helper --report-step $@ get-lambda-policy $(FUNCTION_NAME) 2>&1 || true)"; \
 	if echo "$$permission" | grep -q 'ResourceNotFoundException' || \
 	   ! echo "$$permission" | grep -q 'elasticloadbalancing.amazonaws.com'; then \
-	    alr-helper add-permission \
+	    alr-helper --report-step $@ add-permission \
 	        $(FUNCTION_NAME) \
 	        alb-trigger-$(FUNCTION_NAME) \
 	        lambda:InvokeFunction \
@@ -38,24 +47,27 @@ $(CACHE_DIR)/alb-lambda-permission: $(CACHE_DIR)/lambda-function | $(CACHE_DIR)
 	    exit 1; \
 	fi; \
 	echo "$(FUNCTION_NAME)" > $@ || { rm -f $@ && exit 1; }; \
-	chmod 444 $@
+	chmod 444 $@; \
+	alr-helper report-step $@ done ok
 
 ########################################################################
 # create Lambda target group
 ########################################################################
 $(CACHE_DIR)/alb-target-group: $(CACHE_DIR)/alb-lambda-permission | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
 	test -z "$(LISTENER_ARN)" && { \
 	    echo "ERROR: LISTENER_ARN is required for alb trigger type" >&2; exit 1; \
 	}; \
-	tg="$$(alr-helper get-alb-target-group $(FUNCTION_NAME))"; \
+	tg="$$(alr-helper --report-step $@ get-alb-target-group $(FUNCTION_NAME))"; \
 	if [[ -z "$$tg" || "$$tg" = "None" ]]; then \
-	    tg="$$(alr-helper create-alb-target-group $(FUNCTION_NAME))"; \
+	    tg="$$(alr-helper --report-step $@ create-alb-target-group $(FUNCTION_NAME))"; \
 	fi; \
 	echo $$tg; \
 	test -z "$$tg" && { rm -f $@ && exit 1; }; \
 	echo "$$tg" > $@ || { rm -f $@ && exit 1; }; \
-	chmod 444 $@
+	chmod 444 $@; \
+	alr-helper report-step $@ done ok
 
 ########################################################################
 # register Lambda function with target group
@@ -63,13 +75,15 @@ $(CACHE_DIR)/alb-target-group: $(CACHE_DIR)/alb-lambda-permission | $(CACHE_DIR)
 $(CACHE_DIR)/alb-target-group-registration: \
     $(CACHE_DIR)/alb-target-group \
     $(CACHE_DIR)/lambda-function | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ || true; \
+	$(NO_ECHO)alr-helper report-step $@ start;
+	chmod -f 644 $@ || true; \
 	tg_arn="$$(cat $(CACHE_DIR)/alb-target-group | dnk TargetGroupArn)"; \
-	alr-helper register-alb-target \
+	alr-helper --report-step $@ register-alb-target \
 	    $$tg_arn \
 	    $(FUNCTION_NAME) || exit 1; \
 	echo "$$tg_arn" > $@ || { rm -f $@ && exit 1; }; \
-	chmod 444 $@
+	chmod 444 $@; \
+	alr-helper report-step $@ done ok
 
 .PHONY: lambda-alb-pipeline
 lambda-alb-pipeline: \
@@ -78,21 +92,24 @@ lambda-alb-pipeline: \
 
 .PHONY: _lambda-alb-teardown
 _lambda-alb-teardown:
-	$(NO_ECHO)rule_arn="$$(cat $(CACHE_DIR)/alb-listener-rule 2>/dev/null | dnk RuleArn)"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	if [[ -e "$(CACHE_DIR)/alb-listener-rule" ]]; then \
+	  rule_arn="$$(cat $(CACHE_DIR)/alb-listener-rule 2>/dev/null | dnk RuleArn)"; \
+	fi; \
 	if [[ -n "$$rule_arn" ]]; then \
-	    alr-helper delete-alb-listener-rule $$rule_arn || true; \
+	    alr-helper --report-step $@ delete-alb-listener-rule $$rule_arn || true; \
 	fi; \
-	tg_arn="$$(cat $(CACHE_DIR)/alb-target-group 2>/dev/null | dnk TargetGroupArn)";  \
+	tg_arn="$$(cat $(CACHE_DIR)/alb-target-group 2>/dev/null | dnk TargetGroupArn 2>/dev/null || true)";  \
 	if [[ -n "$$tg_arn" ]]; then \
-	    alr-helper deregister-alb-target $$tg_arn $(FUNCTION_NAME) || true; \
-	    alr-helper delete-alb-target-group $$tg_arn || true; \
+	    alr-helper --report-step $@ deregister-alb-target $$tg_arn $(FUNCTION_NAME) || true; \
+	    alr-helper --report-step $@ delete-alb-target-group $$tg_arn || true; \
 	fi; \
-	alr-helper remove-permission $(FUNCTION_NAME) alb-trigger-$(FUNCTION_NAME) || true; \
-	alr-helper delete-function $(FUNCTION_NAME) || true; \
-	alr-helper detach-all-policies $(ROLE_NAME) || true; \
-	alr-helper delete-role $(ROLE_NAME) || true; \
-	alr-helper delete-repo $(REPO_NAME) || true
-
+	alr-helper --report-step $@ remove-permission $(FUNCTION_NAME) alb-trigger-$(FUNCTION_NAME) || true; \
+	alr-helper --report-step $@ delete-function $(FUNCTION_NAME) || true; \
+	alr-helper --report-step $@ detach-all-policies $(ROLE_NAME) || true; \
+	alr-helper --report-step $@ delete-role $(ROLE_NAME) || true; \
+	alr-helper --report-step $@ delete-repo $(REPO_NAME) || true
+	alr-helper report-step $@ done ok
 .PHONY: lambda-alb-teardown
 lambda-alb-teardown: _lambda-alb-teardown clean ## deprovision full ALB Lambda stack
 
@@ -100,7 +117,7 @@ lambda-alb-teardown: _lambda-alb-teardown clean ## deprovision full ALB Lambda s
 # value stamp: rebuilds the listener rule only when ALB_PATH / priority change
 ########################################################################
 $(CACHE_DIR)/alb-listener-rule.value: | $(CACHE_DIR)
-	$(NO_ECHO)printf '%s\n' "$(ALB_PATH) $(RULE_PRIORITY)" > $@.tmp; \
+	$(NO_ECHO)printf '%s\n' "$(ALB_CONDITIONS) $(RULE_PRIORITY)" > $@.tmp; \
 	if ! cmp -s $@.tmp $@ 2>/dev/null; then \
 	    mv $@.tmp $@; \
 	else \
@@ -115,26 +132,28 @@ $(CACHE_DIR)/alb-listener-rule.value: | $(CACHE_DIR)
 $(CACHE_DIR)/alb-listener-rule: \
     $(CACHE_DIR)/alb-target-group-registration \
     $(CACHE_DIR)/alb-listener-rule.value | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ || true; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ || true; \
 	tg_arn="$$(dnk get TargetGroupArn -f json -i $(CACHE_DIR)/alb-target-group)"; \
 	rule_arn="$$(dnk get RuleArn -f json -i $@ 2>/dev/null || true)"; \
 	if [[ -n "$$rule_arn" && "$$rule_arn" != "None" ]]; then \
-	    rule="$$(alr-helper modify-alb-listener-rule \
+	    rule="$$(alr-helper --report-step $@ modify-alb-listener-rule \
 	        $$rule_arn \
 	        $$tg_arn \
-	        path:$(ALB_PATH))"; \
+	        $(ALB_CONDITIONS))"; \
 	else \
-	    rule="$$(alr-helper get-alb-listener-rule \
+	    rule="$$(alr-helper --report-step $@ get-alb-listener-rule \
 	        $(LISTENER_ARN) \
-	        $(ALB_PATH) 2>/dev/null)"; \
+	        $(ALB_CONDITIONS) 2>/dev/null)"; \
 	    if [[ -z "$$rule" || "$$rule" = "None" ]]; then \
-	        rule="$$(alr-helper create-alb-listener-rule \
+	        rule="$$(alr-helper --report-step $@ create-alb-listener-rule \
 	            $(LISTENER_ARN) \
 	            $$tg_arn \
-	            path:$(ALB_PATH) \
+	            $(ALB_CONDITIONS) \
 	            priority:$(RULE_PRIORITY))"; \
 	    fi; \
 	fi; \
 	test -z "$$rule" && { rm -f $@ && exit 1; }; \
 	echo "$$rule" > $@ || { rm -f $@ && exit 1; }; \
-	chmod 444 $@
+	chmod 444 $@; \
+	alr-helper report-step $@ done ok

@@ -26,22 +26,25 @@ S3_EVENT           ?= s3:ObjectCreated:*
 CONCURRENCY        ?= 1
 
 $(CACHE_DIR)/sqs-queue-redrive: $(CACHE_DIR)/sqs-queue $(CACHE_DIR)/sqs-dlq | $(CACHE_DIR) ## ensure redrive policy is set on queue
-	$(NO_ECHO)policy="$$(alr-helper get-queue-attributes $(QUEUE_NAME) RedrivePolicy | dnk get Attributes.RedrivePolicy)"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	policy="$$(alr-helper --report-step $@ get-queue-attributes $(QUEUE_NAME) RedrivePolicy | dnk get Attributes.RedrivePolicy)"; \
 	if [[ -z "$$policy" ]]; then \
-	    alr-helper set-queue-redrive-policy \
+	    alr-helper --report-step $@ set-queue-redrive-policy \
 	        $(QUEUE_NAME) \
 	        $(DLQ_NAME) \
 	        $(RECEIVE_COUNT) || exit 1; \
 	fi; \
-	echo "$(QUEUE_NAME)" > $@ && chmod 444 $@ || { rm -f $@; exit 1; }
+	echo "$(QUEUE_NAME)" > $@ && chmod 444 $@; 
+	alr-helper report-step $@ done ok
 
 $(CACHE_DIR)/sqs-dlq: | $(CACHE_DIR) ## create dead letter queue
-	$(NO_ECHO)queue="$$(alr-helper list-queues | dnk QueueUrls | grep $(DLQ_NAME))"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	queue="$$(alr-helper --report-step $@ list-queues | dnk QueueUrls | grep $(DLQ_NAME))"; \
 	if echo "$$queue" | grep -q 'error\|Error'; then \
 	    echo "ERROR: list-queues failed: $$queue" >&2; \
 	    exit 1; \
 	elif [[ -z "$$queue" || "$$queue" = "None" ]]; then \
-	    alr-helper create-queue $(DLQ_NAME) \
+	    alr-helper --report-step $@ create-queue $(DLQ_NAME) \
 	        retention:$(DLQ_RETENTION); \
 	    queue="$(DLQ_NAME)"; \
 	fi; \
@@ -50,14 +53,16 @@ $(CACHE_DIR)/sqs-dlq: | $(CACHE_DIR) ## create dead letter queue
 	fi; \
 	echo "$$queue" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
+	alr-helper report-step $@ done ok
 
 $(CACHE_DIR)/sqs-queue: $(CACHE_DIR)/sqs-dlq | $(CACHE_DIR) ## create SQS queue with visibility timeout and redrive policy
-	$(NO_ECHO)queue="$$(alr-helper list-queues | dnk QueueUrls | grep $(QUEUE_NAME))"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	queue="$$(alr-helper --report-step $@ list-queues | dnk QueueUrls | grep $(QUEUE_NAME))"; \
 	if echo "$$queue" | grep -q 'error\|Error'; then \
 	    echo "ERROR: list-queues failed: $$queue" >&2; \
 	    exit 1; \
 	elif [[ -z "$$queue" || "$$queue" = "None" ]]; then \
-	    alr-helper create-queue $(QUEUE_NAME) \
+	    alr-helper --report-step $@ create-queue $(QUEUE_NAME) \
 	        retention:$(RETENTION) \
 	        timeout:$(VISIBILITY_TIMEOUT) \
 	        receive_count:$(RECEIVE_COUNT) \
@@ -68,46 +73,54 @@ $(CACHE_DIR)/sqs-queue: $(CACHE_DIR)/sqs-dlq | $(CACHE_DIR) ## create SQS queue 
 	chmod 444 $@
 
 $(CACHE_DIR)/sqs-queue-policy: $(CACHE_DIR)/sqs-queue | $(CACHE_DIR) ## grant S3 permission to send messages to the queue
-	$(NO_ECHO)alr-helper set-queue-bucket-policy \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	alr-helper --report-step $@ set-queue-bucket-policy \
 	    $(QUEUE_NAME) \
 	    $(BUCKET_NAME) || exit 1; \
 	echo "$(QUEUE_NAME)" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
+	alr-helper report-step $@ done ok
 
 $(CACHE_DIR)/lambda-concurrency: $(CACHE_DIR)/lambda-function | $(CACHE_DIR) ## set Lambda reserved concurrency to 1 for serial indexing
-	$(NO_ECHO)chmod -f 644 $@ || true; \
-	alr-helper put-function-concurrency $(FUNCTION_NAME) $(CONCURRENCY) || exit 1; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ || true; \
+	alr-helper --report-step $@ put-function-concurrency $(FUNCTION_NAME) $(CONCURRENCY) || exit 1; \
 	echo "$(FUNCTION_NAME)" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
+	alr-helper report-step $@ done ok
 
 $(CACHE_DIR)/lambda-sqs-trigger: \
     $(CACHE_DIR)/lambda-function \
     $(CACHE_DIR)/sqs-queue \
     $(CACHE_DIR)/sqs-queue-redrive \
     $(CACHE_DIR)/lambda-sqs-permission | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ || true; \
-	trigger="$$(alr-helper list-eventsource-mappings \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ || true; \
+	trigger="$$(alr-helper --report-step $@ list-eventsource-mappings \
 	    $(FUNCTION_NAME) \
 	    queue:$(QUEUE_NAME) | dnk 'EventSourceMappings[0].UUID')"; \
 	if [[ -z "$$trigger" || "$$trigger" = "None" ]]; then \
-	  trigger="$$(alr-helper create-eventsource-mappings \
+	  trigger="$$(alr-helper --report-step $@ create-eventsource-mappings \
 	    $(FUNCTION_NAME) queue:$(QUEUE_NAME) \
 	    batch-size:$(BATCH_SIZE))"; \
 	  uuid=$$(echo "$$trigger" | dnk UUID); \
-	  alr-helper wait-eventsource-mapping-enabled $$uuid; \
+	  alr-helper --report-step $@ wait-eventsource-mapping-enabled $$uuid; \
 	fi; \
 	test -z "$$trigger" && { rm -f $@ && exit 1; }; \
 	echo "$$trigger" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
+	alr-helper report-step $@ done ok
 
 $(CACHE_DIR)/lambda-s3-sqs-trigger: $(CACHE_DIR)/sqs-queue-policy | $(CACHE_DIR) ## update S3 bucket notification to deliver to SQS
-	$(NO_ECHO)alr-helper put-bucket-notification \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	alr-helper --report-step $@ put-bucket-notification \
 	    $(BUCKET_NAME) \
 	    sqs:$(QUEUE_NAME) \
 	    event:$(S3_EVENT) \
 	    name:prefix,value:$(KEY_PREFIX) || exit 1; \
 	echo "$(QUEUE_NAME)" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
+	alr-helper report-step $@ done ok
 
 .PHONY: lambda-sqs-pipeline
 lambda-sqs-pipeline: \
@@ -118,10 +131,12 @@ lambda-sqs-pipeline: \
     $(CACHE_DIR)/lambda-sqs-response-types
 
 $(CACHE_DIR)/lambda-sqs-permission: $(CACHE_DIR)/lambda-function $(CACHE_DIR)/sqs-queue | $(CACHE_DIR)
-	$(NO_ECHO)permission="$$(alr-helper get-lambda-policy $(FUNCTION_NAME) 2>&1 || true)"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	alr-helper report-step $@ start; \
+	permission="$$(alr-helper --report-step $@ get-lambda-policy $(FUNCTION_NAME) 2>&1 || true)"; \
 	if echo "$$permission" | grep -q 'ResourceNotFoundException' || \
 	   ! echo "$$permission" | grep -q 'sqs.amazonaws.com'; then \
-	    alr-helper add-permission \
+	    alr-helper --report-step $@ add-permission \
 	        $(FUNCTION_NAME) \
 	        sqs-trigger-$(QUEUE_NAME) \
 	        lambda:InvokeFunction \
@@ -130,6 +145,7 @@ $(CACHE_DIR)/lambda-sqs-permission: $(CACHE_DIR)/lambda-function $(CACHE_DIR)/sq
 	fi; \
 	test -e $@ || echo "$(QUEUE_NAME)" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@ 
+	alr-helper report-step $@ done ok
 
 PARTIAL_BATCH_RESPONSE ?= false
 
@@ -140,27 +156,31 @@ else
 endif
 
 $(CACHE_DIR)/lambda-sqs-response-types: $(CACHE_DIR)/lambda-sqs-trigger lambda.env | $(CACHE_DIR)
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
-	uuid="$$(alr-helper list-eventsource-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | dnk 'EventSourceMappings[0].UUID')"; \
-	alr-helper wait-eventsource-mapping-enabled $$uuid; \
-	rsp="$$(alr-helper update-eventsource-mapping uuid:$$uuid $(RESPONSE_TYPES_ARG))"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
+	uuid="$$(alr-helper --report-step $@ list-eventsource-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | dnk 'EventSourceMappings[0].UUID')"; \
+	alr-helper --report-step $@ wait-eventsource-mapping-enabled $$uuid; \
+	rsp="$$(alr-helper --report-step $@ update-eventsource-mapping uuid:$$uuid $(RESPONSE_TYPES_ARG))"; \
 	test -n "$$rsp" || { rm -f $@ && exit 1; }; \
 	echo "$$rsp" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
+	alr-helper report-step $@ done ok
 
 .PHONY: lambda-sqs-teardown
 lambda-sqs-teardown: _lambda-sqs-teardown clean ## deprovision full s3-sqs stack
 
 .PHONY: _lambda-sqs-teardown
 _lambda-sqs-teardown:
-	$(NO_ECHO)alr-helper remove-bucket-notification $(BUCKET_NAME) || true; \
-	uuid="$$(alr-helper list-eventsource-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | dnk 'EventSourceMappings[0].UUID')"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	alr-helper --report-step $@ remove-bucket-notification $(BUCKET_NAME) || true; \
+	uuid="$$(alr-helper --report-step $@ list-eventsource-mappings $(FUNCTION_NAME) queue:$(QUEUE_NAME) | dnk 'EventSourceMappings[0].UUID')"; \
 	if [[ -n "$$uuid" ]]; then \
-	  alr-helper delete-eventsource-mappings $$uuid || true; \
+	  alr-helper --report-step $@ delete-eventsource-mappings $$uuid || true; \
 	fi; \
-	alr-helper delete-queue $(QUEUE_NAME) || true; \
-	alr-helper delete-queue $(DLQ_NAME) || true; \
-	alr-helper delete-function $(FUNCTION_NAME) || true; \
-	alr-helper detach-all-policies $(ROLE_NAME) || true; \
-	alr-helper delete-role $(ROLE_NAME) || true; \
-	alr-helper delete-repo $(REPO_NAME) || true
+	alr-helper --report-step $@ delete-queue $(QUEUE_NAME) || true; \
+	alr-helper --report-step $@ delete-queue $(DLQ_NAME) || true; \
+	alr-helper --report-step $@ delete-function $(FUNCTION_NAME) || true; \
+	alr-helper --report-step $@ detach-all-policies $(ROLE_NAME) || true; \
+	alr-helper --report-step $@ delete-role $(ROLE_NAME) || true; \
+	alr-helper --report-step $@ delete-repo $(REPO_NAME) || true
+	alr-helper report-step $@ done ok

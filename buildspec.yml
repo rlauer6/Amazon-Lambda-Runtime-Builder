@@ -17,7 +17,6 @@ extra-files:
   - ChangeLog
   - share:
       - README.md
-      - profiles.yml
       - share/Dockerfile
       - share/MANIFEST.json
       - share/Handler.pm.tmpl

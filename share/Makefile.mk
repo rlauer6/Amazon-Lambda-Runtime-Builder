@@ -204,17 +204,8 @@ $(CACHE_DIR)/lambda-role: $(CACHE_DIR)/policy-document | $(CACHE_DIR)
 POLICIES_FILE        ?= policies
 CUSTOM_POLICIES_FILE ?= custom-policies.json
 
-ifeq ($(ROLE_PROFILE),)
-  ifeq ($(wildcard $(POLICIES_FILE)),)
-    $(error No policies file '$(POLICIES_FILE)' found and ROLE_PROFILE is not set. \
-      Either create a policies file or set ROLE_PROFILE in $(LAMBDA_ENV))
-  endif
-  ATTACH_POLICIES_CMD = alr-helper attach-policy $(ROLE_NAME) $(POLICIES_FILE)
-  POLICIES_PREREQ     = $(POLICIES_FILE)
-else
-  ATTACH_POLICIES_CMD = alr-helper attach-policies-from-profile $(ROLE_NAME) $(ROLE_PROFILE)
-  POLICIES_PREREQ     = $(LAMBDA_ENV)
-endif
+ATTACH_POLICIES_CMD = alr-helper attach-policy $(ROLE_NAME) $(POLICIES_FILE)
+POLICIES_PREREQ     = $(POLICIES_FILE)
 
 $(CACHE_DIR)/lambda-managed-policies: $(CACHE_DIR)/lambda-role $(POLICIES_PREREQ) | $(CACHE_DIR)
 	$(NO_ECHO)alr-helper report-step $@ start; \

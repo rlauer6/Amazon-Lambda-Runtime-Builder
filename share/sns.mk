@@ -15,17 +15,20 @@
 TOPIC_NAME ?= lambda-runtime
 
 $(CACHE_DIR)/sns-topic: | $(CACHE_DIR) ## create SNS topic (CreateTopic is naturally idempotent)
-	$(NO_ECHO)topic_arn="$$(alr-helper create-topic $(TOPIC_NAME) | dnk TopicArn)"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	topic_arn="$$(alr-helper --report-step $@ create-topic $(TOPIC_NAME) | dnk TopicArn)"; \
 	test -z "$$topic_arn" && { rm -f $@ && exit 1; }; \
 	echo "$$topic_arn" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
+	alr-helper report-step $@ done ok
 
 $(CACHE_DIR)/lambda-sns-permission: $(CACHE_DIR)/lambda-function $(CACHE_DIR)/sns-topic | $(CACHE_DIR) ## grant SNS permission to invoke Lambda
-	$(NO_ECHO)permission="$$(alr-helper get-lambda-policy $(FUNCTION_NAME) 2>&1 || true)"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	permission="$$(alr-helper --report-step $@ get-lambda-policy $(FUNCTION_NAME) 2>&1 || true)"; \
 	if echo "$$permission" | grep -q 'ResourceNotFoundException' || \
 	   ! echo "$$permission" | grep -q 'sns.amazonaws.com'; then \
 	    topic_arn="$$(cat $(CACHE_DIR)/sns-topic)"; \
-	    alr-helper add-permission \
+	    alr-helper --report-step $@ add-permission \
 	        $(FUNCTION_NAME) \
 	        sns-trigger-$(TOPIC_NAME) \
 	        lambda:InvokeFunction \
@@ -34,18 +37,20 @@ $(CACHE_DIR)/lambda-sns-permission: $(CACHE_DIR)/lambda-function $(CACHE_DIR)/sn
 	fi; \
 	test -e $@ || echo "$(TOPIC_NAME)" > $@ || { rm -f $@ && exit 1; }; \
 	chmod 444 $@
+	alr-helper report-step $@ done ok
 
 $(CACHE_DIR)/lambda-sns-trigger: \
     $(CACHE_DIR)/lambda-function \
     $(CACHE_DIR)/sns-topic \
     $(CACHE_DIR)/lambda-sns-permission | $(CACHE_DIR) ## subscribe Lambda function to SNS topic
-	$(NO_ECHO)topic_arn="$$(cat $(CACHE_DIR)/sns-topic) || true"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	topic_arn="$$(cat $(CACHE_DIR)/sns-topic) || true"; \
 	if [[ -n "$$topic_arn" ]]; then \
-	  lambda_arn="$$(alr-helper get-function-arn $(FUNCTION_NAME))"; \
+	  lambda_arn="$$(alr-helper --report-step $@ get-function-arn $(FUNCTION_NAME))"; \
 	  test -z "$$lambda_arn" && { rm -f $@ && exit 1; }; \
-	  rsp="$$(alr-helper get-subscription $$topic_arn $$lambda_arn 2>/dev/null)"; \
+	  rsp="$$(alr-helper --report-step $@ get-subscription $$topic_arn $$lambda_arn 2>/dev/null)"; \
 	  if [[ -z "$$rsp" || "$$rsp" = "None" ]]; then \
-	    rsp="$$(alr-helper --log-level debug subscribe \
+	    rsp="$$(alr-helper --report-step $@ --log-level debug subscribe \
 	      $$topic_arn \
 	      protocol:lambda \
 	      endpoint=$$lambda_arn)"; \
@@ -54,6 +59,8 @@ $(CACHE_DIR)/lambda-sns-trigger: \
 	  echo "$$rsp" > $@ || { rm -f $@ && exit 1; }; \
 	  chmod 444 $@
 	fi
+	alr-helper report-step $@ done ok
+
 	# Lambda-protocol same-account SNS subscriptions are auto-confirmed by
 	# AWS — confirmation is only required for http/https/email endpoints or
 	# cross-account subscriptions (see AWS Subscribe API docs). No
@@ -78,19 +85,14 @@ lambda-sns-teardown: _lambda-sns-teardown clean ## deprovision full SNS stack
 # this Lambda.
 .PHONY: _lambda-sns-teardown
 _lambda-sns-teardown:
-	$(NO_ECHO)topic_arn="$$(cat $(CACHE_DIR)/sns-topic 2>/dev/null || true)"; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	topic_arn="$$(cat $(CACHE_DIR)/sns-topic 2>/dev/null || true)"; \
 	if [[ -n "$$topic_arn" ]]; then \
 	  sub_arn="$$(cat $(CACHE_DIR)/lambda-sns-trigger 2>/dev/null | dnk SubscriptionArn)"; \
 	  if [[ -n "$$sub_arn" && "$$sub_arn" != "pending confirmation" ]]; then \
-	    alr-helper unsubscribe $$sub_arn || true; \
+	    alr-helper --report-step $@ unsubscribe $$sub_arn || true; \
 	  fi; \
 	fi;
-
-	# alr-helper delete-topic $(TOPIC_NAME) || true; \
-	alr-helper delete-function $(FUNCTION_NAME) || true; \
-	alr-helper detach-all-policies $(ROLE_NAME) || true; \
-	alr-helper delete-role $(ROLE_NAME) || true; \
-	alr-helper delete-repo $(REPO_NAME) || true
 
 ########################################################################
 # SNS Lambda Handler test

@@ -25,7 +25,8 @@ PLATFORM_REPO ?= $(PLATFORM_IMAGE)
 ########################################################################
 $(CACHE_DIR)/platform: $(wildcard Dockerfile.platform) | $(CACHE_DIR)
 ########################################################################
-	$(NO_ECHO)chmod -f 644 $@ 2>/dev/null || true; \
+	$(NO_ECHO)alr-helper report-step $@ start; \
+	chmod -f 644 $@ 2>/dev/null || true; \
 	chmod -f 644 $(CACHE_DIR)/platform-ecr-repo 2>/dev/null || true; \
 	test -e Dockerfile.platform || { \
 	    echo "ERROR: no Dockerfile.platform found in $(CURDIR)" >&2; exit 1; \
@@ -33,17 +34,21 @@ $(CACHE_DIR)/platform: $(wildcard Dockerfile.platform) | $(CACHE_DIR)
 	test -z "$(PLATFORM_REPO)" && { \
 	    echo "ERROR: PLATFORM_IMAGE is required in lambda.env" >&2; exit 1; \
 	}; \
-	platform_uri="$$(alr-helper describe-repositories $(PLATFORM_REPO) filter=repositories[0].repositoryUri 2>/dev/null)"; \
+	platform_uri="$$(alr-helper --report-step $@ describe-repositories $(PLATFORM_REPO) filter=repositories[0].repositoryUri 2>/dev/null)"; \
 	if [[ -z "$$platform_uri" ]]; then \
-	    platform_uri="$$(alr-helper create-repository $(PLATFORM_REPO) filter=repository.repositoryUri)"; \
+	    platform_uri="$$(alr-helper --report-step $@ create-repository $(PLATFORM_REPO) filter=repository.repositoryUri)"; \
 	fi; \
 	test -z "$$platform_uri" && { \
 	    echo "ERROR: could not determine ECR URI for $(PLATFORM_REPO)" >&2; exit 1; \
 	}; \
 	echo "$$platform_uri" > $(CACHE_DIR)/platform-ecr-repo && chmod 444 $(CACHE_DIR)/platform-ecr-repo; \
+	alr-helper report-step $@ docker-build start; \
 	docker build -t $(PLATFORM_REPO) -f Dockerfile.platform . || exit 1; \
+	alr-helper report-step $@ docker-build ok; \
 	docker tag $(PLATFORM_REPO):latest $$platform_uri:latest; \
+	alr-helper report-step $@ docker-push start; \
 	docker push $$platform_uri:latest || exit 1; \
+	alr-helper report-step $@ docker-push ok; \
 	echo "$$platform_uri" > $@ && chmod 444 $@; \
 	chmod -f 644 $(CACHE_DIR)/image 2>/dev/null || true; \
 	rm -f $(CACHE_DIR)/image \
@@ -52,6 +57,7 @@ $(CACHE_DIR)/platform: $(wildcard Dockerfile.platform) | $(CACHE_DIR)
 	      $(CACHE_DIR)/lambda-function \
 	      $(CACHE_DIR)/lambda-configuration; \
 	echo "Platform image pushed — handler image sentinels cleared for rebuild"
+	alr-helper report-step $@ done ok
 
 .PHONY: platform
 platform: $(CACHE_DIR)/platform ## build and push platform image, invalidate handler image

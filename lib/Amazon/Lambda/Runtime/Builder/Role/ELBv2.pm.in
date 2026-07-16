@@ -160,21 +160,34 @@ sub cmd_elbv2_get_alb_listener_rule {
 ########################################################################
   my ($self) = @_;
 
-  my ( $listener_arn, $path ) = $self->get_args;
+  my ( $listener_arn, @kv ) = $self->get_args;
 
-  die "ERROR: usage: get-alb-listener-rule listener-arn path\n"
-    if !$listener_arn || !$path;
+  die "ERROR: usage: get-alb-listener-rule listener-arn [path:REGEX] [host:HOSTNAME]\n"
+    if !$listener_arn;
+
+  my %args = map { split /:/xsm, $_, 2 } @kv;
+  my $path = $args{path};
+  my $host = $args{host};
+
+  die "ERROR: you must supply either a path or host name\n"
+    if !$path && !$host;
 
   my ($rule) = eval {
     my $rsp = $self->_elbv2->DescribeRules( { ListenerArn => $listener_arn } );
 
     return grep {
       my $conditions = $_->{Conditions} // [];
-      grep {
+      my $path_ok    = !$path || grep {
         $_->{Field} eq 'path-pattern'
           && grep { $_ eq $path }
-          @{ $_->{Values} // [] }
-      } @{$conditions}
+          @{ $_->{PathPatternConfig}{RegexValues} // [] }
+      } @{$conditions};
+      my $host_ok = !$host || grep {
+        $_->{Field} eq 'host-header'
+          && grep { $_ eq $host }
+          @{ $_->{HostHeaderConfig}{Values} // [] }
+      } @{$conditions};
+      $path_ok && $host_ok;
     } @{ $rsp->{Rules} // [] };
   };
 
@@ -196,13 +209,14 @@ sub cmd_elbv2_create_alb_listener_rule {
 
   my $command = $self->command =~ /create/xsm ? 'create' : 'modify';
 
-  die sprintf "ERROR: usage: %s-alb-listener-rule %s-arn tg-arn path:PATH priority:N\n",
+  die sprintf "ERROR: usage: %s-alb-listener-rule %s-arn tg-arn [path:REGEX] [host:HOSTNAME] priority:N\n",
     $command, $command eq 'create' ? 'listener' : 'rule'
     if !$arn || !$tg_arn;
 
   my %args = map { split /:/xsm, $_, 2 } @kv;
 
-  my $path = $args{path} // q{/};
+  my $path = $args{path} // q{^/};
+  my $host = $args{host};
 
   eval { qr/$path/; 1 }
     or die "ERROR: $path is not a valid regex: $EVAL_ERROR";
@@ -212,11 +226,21 @@ sub cmd_elbv2_create_alb_listener_rule {
 
   my $priority = $args{priority} // 999;
 
-  my $conditions = [
-    { Field             => 'path-pattern',
-      PathPatternConfig => { RegexValues => [$path] }
-    },
-  ];
+  my @conditions;
+
+  push @conditions,
+    {
+    Field             => 'path-pattern',
+    PathPatternConfig => { RegexValues => [$path] },
+    };
+
+  if ($host) {
+    push @conditions,
+      {
+      Field            => 'host-header',
+      HostHeaderConfig => { Values => [$host] },
+      };
+  }
 
   my $method = $command eq 'create' ? 'CreateRule' : 'ModifyRule';
 
@@ -224,7 +248,7 @@ sub cmd_elbv2_create_alb_listener_rule {
     my $rsp = $self->_elbv2->$method(
       { $command eq 'create' ? ( ListenerArn => $arn ) : ( RuleArn => $arn ),
         Priority   => $priority + 0,
-        Conditions => $conditions,
+        Conditions => \@conditions,
         Actions    => [
           { Type           => 'forward',
             TargetGroupArn => $tg_arn,
