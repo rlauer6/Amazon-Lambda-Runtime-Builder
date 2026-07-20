@@ -1,3 +1,18 @@
+Mon Jul 20 14:38:20 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.5.3]:
+	* README.md: generated
+	* VERSION: bump
+	* release-notes.md: updated
+	* release-notes/release-notes-1.5.2.md: new
+	* deps.mk: new
+	* .gitignore: + *.checked
+	* .includes/git.mk: updated by CPAN::Maker::Bootstrapper
+	* .includes/perl.mk: likewise
+	* .includes/update.mk: likewise
+	* Makefile: likewise
+	* project.mk: replaced by deps.mk
+
 Thu Jul 16 13:41:09 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.5.2]:
