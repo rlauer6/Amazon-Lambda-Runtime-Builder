@@ -480,6 +480,12 @@ deployment toolchain for Perl Lambda container images
   # Verify tools and IAM permissions before your first build
   alr-builder check
 
+  # Build and deploy the Lambda - full pipeline, with progress and logging
+  alr-builder build
+
+  # Tear it all down when finished
+  alr-builder teardown
+
   # Validate lambda.env (or lambda.yaml) against this Lambda's requirements
   alr-builder check-env-file
 
@@ -497,16 +503,25 @@ event source of your choice.
 
 Five trigger types are supported - C<s3-sqs>, C<s3-direct>,
 C<eventbridge>, C<sns>, and C<alb> - selected with a single
-C<TRIGGER_TYPE> value and provisioned by one dispatching target
-(C<make lambda-pipeline>). See L</CONFIGURATION> and L</WORKFLOW>.
+C<TRIGGER_TYPE> value and provisioned by a single command,
+C<alr-builder build>. See L</CONFIGURATION> and L</WORKFLOW>.
 
-The C<alr-builder> CLI provides four commands:
+The C<alr-builder> CLI provides six commands (any command may be
+abbreviated to a unique prefix - e.g. C<build> for C<build-lambda>,
+C<teardown> for C<teardown-lambda>):
 
 =over 4
 
 =item * B<install> - copies the project scaffold (handler template,
 managed-policy list, and the C<make> integration files) into a target
 directory.
+
+=item * B<build-lambda> - builds and deploys the Lambda by running the
+full pipeline, with live progress and a timestamped build log. Abbreviate
+as C<build>.
+
+=item * B<teardown-lambda> - tears the deployment down (same progress and
+logging). Abbreviate as C<teardown>.
 
 =item * B<check> - verifies that required system tools are present on
 your C<PATH> and, if the optional IAM modules are installed, confirms
@@ -526,6 +541,13 @@ A second, internal CLI - C<alr-helper> - wraps the AWS API calls the
 Makefiles invoke (ECR, IAM, Lambda, SQS, SNS, S3, EventBridge, ELBv2,
 CloudWatch Logs, STS). You do not normally call it directly; the
 Makefiles do.
+
+Use C<alr-builder build> and C<alr-builder teardown> for the full
+build/deploy and teardown lifecycle; they run the C<make> pipeline and add
+live per-step progress and a timestamped build log. To run or re-run an
+individual step - build just the image, invoke the function, push a
+code-only update - call the corresponding C<make> target directly; see
+L</MAKEFILE TARGETS>.
 
 =head1 COMMANDS
 
@@ -589,6 +611,49 @@ tarball's C<META.json> (see L</WORKFLOW>).
 
 Use C<--force> to overwrite a file whose manifest policy would otherwise
 refuse to replace it.
+
+=head2 build-lambda
+
+  alr-builder build-lambda [VAR=value ...]
+  alr-builder build                          # abbreviation
+
+Builds and provisions the Lambda for the configured C<TRIGGER_TYPE> by
+running the framework's pipeline (C<make -f Makefile.builder
+lambda-pipeline>). Run it from a configured project directory: it reads
+C<lambda.env> for C<FUNCTION_NAME> and aborts if that is unset, so run
+L</install> and configure C<lambda.yaml> first.
+
+This is the recommended way to build. Over a bare C<make lambda-pipeline>
+it adds:
+
+=over 4
+
+=item * live, per-step progress rendered as the pipeline runs;
+
+=item * a timestamped build log at
+C<.cache/E<lt>function-nameE<gt>/build-E<lt>timestampE<gt>.log>, symlinked
+in the current directory as C<build.log> (older logs are pruned
+automatically);
+
+=item * an elapsed-time summary on completion, and on failure the tail of
+the log plus its path.
+
+=back
+
+Any trailing C<VAR=value> arguments are passed through to C<make>. Returns
+C<make>'s exit status. Abbreviate as C<alr-builder build>.
+
+=head2 teardown-lambda
+
+  alr-builder teardown-lambda [VAR=value ...]
+  alr-builder teardown                       # abbreviation
+
+Tears the deployment down by running the C<lambda-teardown> target, with
+the same progress rendering, timestamped logging, argument pass-through,
+and exit-status behavior as L</build-lambda>. See L</WORKFLOW> (Phase 3)
+for exactly what is and isn't removed - notably, the SQS queue and the
+platform ECR repository are left in place by design. Abbreviate as
+C<alr-builder teardown>.
 
 =head2 check
 
@@ -921,9 +986,9 @@ See L<CPAN::Maker::Bootstrapper> for full details.
 =item 6.
 
 B<Deploy> - provision the image, role, function, log group, and the event
-source for your trigger type in one step:
+source for your trigger type in one command:
 
-  make lambda-pipeline
+  alr-builder build
 
 =item 7.
 
@@ -941,7 +1006,7 @@ B<Deploy subsequent changes>:
 
 B<Tear down> when finished:
 
-  make lambda-teardown
+  alr-builder teardown
 
 =back
 
@@ -996,7 +1061,9 @@ C<CACHE_BUST> (or the file's contents) to force it to re-run.
 
 =head2 Phase 2 - Provision function and event source
 
-C<make lambda-pipeline> is the single entry point. It:
+C<alr-builder build> is the single entry point. It runs the
+C<make lambda-pipeline> target - adding live progress and a timestamped
+build log at C<.cache/E<lt>function-nameE<gt>/build.log> - which:
 
 =over 4
 
@@ -1033,11 +1100,12 @@ rebuilds and re-applies the overlay.
 
 =head2 Phase 3 - Teardown
 
-  make lambda-teardown
+  alr-builder teardown
 
-Dispatches on C<TRIGGER_TYPE> to the matching teardown, removes the
-overlay (if C<OVERLAY> is set), and deletes the CloudWatch log group.
-Shared resources are treated conservatively: an SNS topic is B<not>
+Runs the C<make lambda-teardown> target, which dispatches on
+C<TRIGGER_TYPE> to the matching teardown, removes the overlay (if
+C<OVERLAY> is set), and deletes the CloudWatch log group. Shared
+resources are treated conservatively: an SNS topic is B<not>
 deleted by default (it may have other subscribers), and the platform ECR
 repository must be removed manually (see C<platform-teardown>).
 
@@ -1049,7 +1117,7 @@ Two mechanisms control the Lambda execution role's permissions:
 
 =item B<Managed policies>
 
-Th C<policies> file autogenerated based on the trigger-type was
+The C<policies> file autogenerated based on the trigger-type was
 created when you installed the project. This file lists AWS managed
 policy ARNs, one per line. For some trigger types specific policies
 are enabled by uncommenting the policy. Uncomment policies for your
@@ -1076,6 +1144,7 @@ individually.
 
 B<Example F<custom-policies.js> File>
 
+ {
    "Version": "2012-10-17",
    "Statement": [
      {
@@ -1087,6 +1156,7 @@ B<Example F<custom-policies.js> File>
        "Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-app/db-credentials-AbCdEf"
      }
    ]
+ }
 
 =back
 

@@ -72,16 +72,17 @@ endif
 lambda-policies:            $(CACHE_DIR)/lambda-policies ## attach IAM policies to execution role
 lambda-function:            $(CACHE_DIR)/lambda-function ## create Lambda function (builds image if needed)
 lambda-role:                $(CACHE_DIR)/lambda-role ## create IAM execution role
-ecr-repo:                   $(CACHE_DIR)/ecr-repo 
+ecr-repo:                   $(CACHE_DIR)/ecr-repo ## provision ECR repository with lifecycle policy
 deploy:                     $(CACHE_DIR)/deploy ## push image to ECR and tag as latest
 image:                      $(CACHE_DIR)/image ## build Docker image from distribution tarball
-lambda-s3-trigger:          $(CACHE_DIR)/lambda-s3-trigger
-lambda-sqs-trigger:         $(CACHE_DIR)/lambda-sqs-trigger
-lambda-eventbridge-trigger: $(CACHE_DIR)/lambda-eventbridge-trigger
-sns:                        $(CACHE_DIR)/sns
-tarball-validated:          $(CACHE_DIR)/tarball-validated
-lambda-managed-policies:    $(CACHE_DIR)/lambda-managed-policies
-lambda-inline-policies:     $(CACHE_DIR)/lambda-inline-policies
+lambda-s3-trigger:          $(CACHE_DIR)/lambda-s3-trigger ## configure S3 bucket notifications (s3-direct)
+lambda-sqs-trigger:         $(CACHE_DIR)/lambda-sqs-trigger ## create SQS queue + DLQ, attach as event source
+lambda-eventbridge-trigger: $(CACHE_DIR)/lambda-eventbridge-trigger ## register Lambda as EventBridge rule target
+lambda-sns-trigger:         $(CACHE_DIR)/lambda-sns-trigger ## subscribe Lambda to the SNS topic
+lambda-function-url:        $(CACHE_DIR)/lambda-function-url ## create Lambda Function URL (streaming)
+tarball-validated:          $(CACHE_DIR)/tarball-validated ## verify handler class is present in the tarball
+lambda-managed-policies:    $(CACHE_DIR)/lambda-managed-policies ## attach AWS managed IAM policies to the role
+lambda-inline-policies:     $(CACHE_DIR)/lambda-inline-policies ## attach inline IAM policies to the role
 
 update-function:            lambda-function ## update Lambda function code to latest image
 ifneq ($(OVERLAY),)
@@ -169,9 +170,7 @@ $(CACHE_DIR)/deploy: $(CACHE_DIR)/ecr-repo $(CACHE_DIR)/image | $(CACHE_DIR)
 	$(NO_ECHO)alr-helper report-step $@ start; \
 	chmod -f 644 $@ 2>/dev/null || true; \
 	URI="$$(cat $(CACHE_DIR)/ecr-repo)"; \
-	PASSWORD="$$(alr-helper --report-step $@ get-login-password)"; \
-	echo "$$PASSWORD" | docker login --username AWS --password-stdin $$URI; \
-	alr-helper report-step $@ docker-login ok; \
+	alr-helper --report-step $@ ecr-login $$URI; \
 	docker tag $(REPO_NAME):latest $$URI:latest; \
 	alr-helper report-step $@ docker-tag ok; \
 	alr-helper report-step $@ docker-push start; \
@@ -344,8 +343,7 @@ endif
 ########################################################################
 # invoke Lambda function
 ########################################################################
-
-invoke: ## invoke Lambda function with test payload $(CACHE_DIR)/lambda-function payload.json
+invoke: $(CACHE_DIR)/lambda-function $(PAYLOAD) ## invoke Lambda function with test payload
 	$(NO_ECHO)alr-helper invoke-function $(FUNCTION_NAME) $(PAYLOAD)
 
 ########################################################################

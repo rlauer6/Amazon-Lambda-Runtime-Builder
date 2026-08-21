@@ -443,6 +443,7 @@ sub main {
     'detach-role-policy'               => \&cmd_iam_detach_role_policy,
     'detach-all-policies'              => \&cmd_iam_detach_all_policies,
     'disable-rule'                     => \&cmd_eventbridge_disable_rule,
+    'ecr-login'                        => \&cmd_ecr_login,
     'enable-rule'                      => \&cmd_eventbridge_enable_rule,
     'get-account'                      => \&cmd_sts_get_account,
     'get-alb-listener-rule'            => \&cmd_elbv2_get_alb_target_group,
@@ -669,6 +670,14 @@ JSON file is slurped and used as the entire request body.
 =item B<describe-repositories> [I<repo-name>] [I<key:value> ...]
 
 [read] List repositories, or describe one by name.
+
+=item B<ecr-login> I<registry-uri>
+
+[write] Authenticate the local Docker daemon to an ECR registry. Fetches an
+authorization token and pipes it to C<docker login --password-stdin>, so a
+subsequent C<docker push> to that registry host succeeds. The I<registry-uri>
+may be a full repository URI; Docker authenticates against its registry host,
+so one login covers every repository in that account and region.
 
 =item B<get-lifecycle-policy> I<repo-name>
 

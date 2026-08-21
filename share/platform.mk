@@ -45,6 +45,7 @@ $(CACHE_DIR)/platform: $(wildcard Dockerfile.platform) | $(CACHE_DIR)
 	alr-helper report-step $@ docker-build start; \
 	docker build -t $(PLATFORM_REPO) -f Dockerfile.platform . || exit 1; \
 	alr-helper report-step $@ docker-build ok; \
+	alr-helper --report-step $@ ecr-login $$platform_uri; \
 	docker tag $(PLATFORM_REPO):latest $$platform_uri:latest; \
 	alr-helper report-step $@ docker-push start; \
 	docker push $$platform_uri:latest || exit 1; \

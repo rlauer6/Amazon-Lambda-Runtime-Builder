@@ -18,6 +18,7 @@ $(CACHE_DIR)/overlay: $(CACHE_DIR)/image $(wildcard Dockerfile) | $(CACHE_DIR)
 	alr-helper report-step docker-build start; \
 	docker build $(NOCACHE) -t $(OVERLAY) . || exit 1; \
 	alr-helper report-step docker-build ok; \
+	alr-helper --report-step $@ ecr-login $$overlay_uri; \
 	docker tag $(OVERLAY):latest $$overlay_uri:latest; \
 	alr-helper report-step docker-push start; \
 	docker push $$overlay_uri:latest || exit 1; \

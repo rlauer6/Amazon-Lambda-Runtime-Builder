@@ -5,6 +5,8 @@
 * [DESCRIPTION](#description)
 * [COMMANDS](#commands)
   * [install](#install)
+  * [build-lambda](#build-lambda)
+  * [teardown-lambda](#teardown-lambda)
   * [check](#check)
   * [check-env-file](#check-env-file)
   * [generate-yaml](#generate-yaml)
@@ -56,6 +58,12 @@ deployment toolchain for Perl Lambda container images
     # Verify tools and IAM permissions before your first build
     alr-builder check
 
+    # Build and deploy the Lambda - full pipeline, with progress and logging
+    alr-builder build
+
+    # Tear it all down when finished
+    alr-builder teardown
+
     # Validate lambda.env (or lambda.yaml) against this Lambda's requirements
     alr-builder check-env-file
 
@@ -73,14 +81,21 @@ event source of your choice.
 
 Five trigger types are supported - `s3-sqs`, `s3-direct`,
 `eventbridge`, `sns`, and `alb` - selected with a single
-`TRIGGER_TYPE` value and provisioned by one dispatching target
-(`make lambda-pipeline`). See ["CONFIGURATION"](#configuration) and ["WORKFLOW"](#workflow).
+`TRIGGER_TYPE` value and provisioned by a single command,
+`alr-builder build`. See ["CONFIGURATION"](#configuration) and ["WORKFLOW"](#workflow).
 
-The `alr-builder` CLI provides four commands:
+The `alr-builder` CLI provides six commands (any command may be
+abbreviated to a unique prefix - e.g. `build` for `build-lambda`,
+`teardown` for `teardown-lambda`):
 
 - **install** - copies the project scaffold (handler template,
 managed-policy list, and the `make` integration files) into a target
 directory.
+- **build-lambda** - builds and deploys the Lambda by running the
+full pipeline, with live progress and a timestamped build log. Abbreviate
+as `build`.
+- **teardown-lambda** - tears the deployment down (same progress and
+logging). Abbreviate as `teardown`.
 - **check** - verifies that required system tools are present on
 your `PATH` and, if the optional IAM modules are installed, confirms
 that your AWS credentials have sufficient permissions to build and deploy.
@@ -95,6 +110,13 @@ A second, internal CLI - `alr-helper` - wraps the AWS API calls the
 Makefiles invoke (ECR, IAM, Lambda, SQS, SNS, S3, EventBridge, ELBv2,
 CloudWatch Logs, STS). You do not normally call it directly; the
 Makefiles do.
+
+Use `alr-builder build` and `alr-builder teardown` for the full
+build/deploy and teardown lifecycle; they run the `make` pipeline and add
+live per-step progress and a timestamped build log. To run or re-run an
+individual step - build just the image, invoke the function, push a
+code-only update - call the corresponding `make` target directly; see
+["MAKEFILE TARGETS"](#makefile-targets).
 
 # COMMANDS
 
@@ -145,6 +167,43 @@ tarball's `META.json` (see ["WORKFLOW"](#workflow)).
 
 Use `--force` to overwrite a file whose manifest policy would otherwise
 refuse to replace it.
+
+## build-lambda
+
+    alr-builder build-lambda [VAR=value ...]
+    alr-builder build                          # abbreviation
+
+Builds and provisions the Lambda for the configured `TRIGGER_TYPE` by
+running the framework's pipeline (`make -f Makefile.builder
+lambda-pipeline`). Run it from a configured project directory: it reads
+`lambda.env` for `FUNCTION_NAME` and aborts if that is unset, so run
+["install"](#install) and configure `lambda.yaml` first.
+
+This is the recommended way to build. Over a bare `make lambda-pipeline`
+it adds:
+
+- live, per-step progress rendered as the pipeline runs;
+- a timestamped build log at
+`.cache/<function-name>/build-<timestamp>.log`, symlinked
+in the current directory as `build.log` (older logs are pruned
+automatically);
+- an elapsed-time summary on completion, and on failure the tail of
+the log plus its path.
+
+Any trailing `VAR=value` arguments are passed through to `make`. Returns
+`make`'s exit status. Abbreviate as `alr-builder build`.
+
+## teardown-lambda
+
+    alr-builder teardown-lambda [VAR=value ...]
+    alr-builder teardown                       # abbreviation
+
+Tears the deployment down by running the `lambda-teardown` target, with
+the same progress rendering, timestamped logging, argument pass-through,
+and exit-status behavior as ["build-lambda"](#build-lambda). See ["WORKFLOW"](#workflow) (Phase 3)
+for exactly what is and isn't removed - notably, the SQS queue and the
+platform ECR repository are left in place by design. Abbreviate as
+`alr-builder teardown`.
 
 ## check
 
@@ -438,9 +497,9 @@ distribution and produce a tarball. `make image` resolves
     See [CPAN::Maker::Bootstrapper](https://metacpan.org/pod/CPAN%3A%3AMaker%3A%3ABootstrapper) for full details.
 
 6. **Deploy** - provision the image, role, function, log group, and the event
-source for your trigger type in one step:
+source for your trigger type in one command:
 
-        make lambda-pipeline
+        alr-builder build
 
 7. **Test**:
 
@@ -452,7 +511,7 @@ source for your trigger type in one step:
 
 9. **Tear down** when finished:
 
-        make lambda-teardown
+        alr-builder teardown
 
 ## Phase 1 - Build the container image
 
@@ -499,7 +558,9 @@ a dedicated layer. Because that layer is otherwise cached, change
 
 ## Phase 2 - Provision function and event source
 
-`make lambda-pipeline` is the single entry point. It:
+`alr-builder build` is the single entry point. It runs the
+`make lambda-pipeline` target - adding live progress and a timestamped
+build log at `.cache/<function-name>/build.log` - which:
 
 1. builds the platform image first if `PLATFORM_IMAGE` is set and a
 `Dockerfile.platform` is present;
@@ -524,11 +585,12 @@ rebuilds and re-applies the overlay.
 
 ## Phase 3 - Teardown
 
-    make lambda-teardown
+    alr-builder teardown
 
-Dispatches on `TRIGGER_TYPE` to the matching teardown, removes the
-overlay (if `OVERLAY` is set), and deletes the CloudWatch log group.
-Shared resources are treated conservatively: an SNS topic is **not**
+Runs the `make lambda-teardown` target, which dispatches on
+`TRIGGER_TYPE` to the matching teardown, removes the overlay (if
+`OVERLAY` is set), and deletes the CloudWatch log group. Shared
+resources are treated conservatively: an SNS topic is **not**
 deleted by default (it may have other subscribers), and the platform ECR
 repository must be removed manually (see `platform-teardown`).
 
@@ -538,7 +600,7 @@ Two mechanisms control the Lambda execution role's permissions:
 
 - **Managed policies**
 
-    Th `policies` file autogenerated based on the trigger-type was
+    The `policies` file autogenerated based on the trigger-type was
     created when you installed the project. This file lists AWS managed
     policy ARNs, one per line. For some trigger types specific policies
     are enabled by uncommenting the policy. Uncomment policies for your
@@ -565,17 +627,19 @@ Two mechanisms control the Lambda execution role's permissions:
 
     **Example `custom-policies.js` File**
 
-        "Version": "2012-10-17",
-        "Statement": [
-          {
-            "Effect": "Allow",
-            "Action": [
-              "secretsmanager:GetSecretValue",
-              "secretsmanager:DescribeSecret"
-            ],
-            "Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-app/db-credentials-AbCdEf"
-          }
-        ]
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret"
+              ],
+              "Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-app/db-credentials-AbCdEf"
+            }
+          ]
+        }
 
 _Note:_ Receiving an event from a service does not automatically grant
 your handler permission to call that service's APIs. An S3 trigger allows

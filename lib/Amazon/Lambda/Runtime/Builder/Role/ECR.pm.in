@@ -187,7 +187,7 @@ sub cmd_ecr_describe_images {
 }
 
 ########################################################################
-sub cmd_ecr_get_login_password {
+sub _ecr_login_password {
 ########################################################################
   my ($self) = @_;
 
@@ -201,7 +201,64 @@ sub cmd_ecr_get_login_password {
 
   my ( undef, $password ) = split /:/, MIME::Base64::decode_base64($decoded);
 
-  print {*STDOUT} $password;
+  return $password;
+}
+
+########################################################################
+sub cmd_ecr_get_login_password {
+########################################################################
+  my ($self) = @_;
+
+  print {*STDOUT} $self->_ecr_login_password;
+
+  return $SUCCESS;
+}
+
+########################################################################
+sub _report_login {
+########################################################################
+  my ( $self, $status ) = @_;
+
+  my $report_step = $self->get_report_step;
+
+  return $SUCCESS
+    if !$report_step;
+
+  return $self->cmd_report_step( $report_step, 'docker-login', $status );
+}
+
+########################################################################
+sub cmd_ecr_login {
+########################################################################
+  my ($self) = @_;
+
+  my ($registry) = $self->get_args;
+
+  die "ERROR: usage: alr-helper ecr-login <registry-uri>\n"
+    if !$registry;
+
+  $self->_report_login('start');
+
+  my $password = $self->_ecr_login_password;
+
+  my $logged_in = eval {
+    open my $docker, q{|-}, 'docker', 'login', '--username', 'AWS', '--password-stdin', $registry
+      or die "cannot exec docker: $OS_ERROR\n";
+
+    print {$docker} "$password\n";
+
+    close $docker
+      or die sprintf "docker login failed (exit %d)\n", $CHILD_ERROR >> 8;
+
+    return $TRUE;
+  };
+
+  if ( !$logged_in ) {
+    $self->_report_login('fail');
+    die $EVAL_ERROR;
+  }
+
+  $self->_report_login('ok');
 
   return $SUCCESS;
 }

@@ -18,3 +18,7 @@
     ./lib/Amazon/Lambda/Runtime/Builder/Role/SQS.pm \
     ./lib/Amazon/Lambda/Runtime/Builder/Role/STS.pm
 
+# ./lib/Amazon/Lambda/Runtime/Builder/Role/Install.pm.in
+./lib/Amazon/Lambda/Runtime/Builder/Role/Install.pm: \
+    ./lib/Amazon/Lambda/Runtime/Builder/Policies.pm
+
