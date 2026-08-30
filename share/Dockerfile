@@ -52,7 +52,7 @@ RUN if [ -f /tmp/requires.reinstall ]; then \
       cpm install --reinstall ${RESOLVER} \
         -L /usr/src/app/local \
         --show-build-log-on-failure \
-        --verbose \
+        --verbose --no-prebuilt \
         $(cat /tmp/requires.reinstall | tr '\n' ' '); \
     fi
 

@@ -218,7 +218,15 @@ sub cmd_sqs_set_queue_redrive_policy {
     return $FAILURE;
   }
 
-  my $dlq_arn = $rsp->{Attributes}{QueueArn};
+  my $dlq_arn = eval { return $self->_sqs_get_queue_arn($dlq_name); };
+
+  if ( !defined $dlq_arn ) {
+    if ($EVAL_ERROR) {
+      print {*STDERR} $EVAL_ERROR;
+    }
+
+    return $FAILURE;
+  }
 
   my $policy = {
     deadLetterTargetArn => $dlq_arn,
@@ -277,6 +285,9 @@ sub _sqs_get_queue_arn {
 
   my $rsp = $self->_sqs_get_queue_attributes( $queue_name, 'QueueArn' );
 
+  return
+    if !defined $rsp->{Attributes};
+
   return $rsp->{Attributes}{QueueArn};
 }
 
@@ -286,6 +297,9 @@ sub _sqs_get_queue_policy {
   my ( $self, $queue_name ) = @_;
 
   my $rsp = $self->_sqs_get_queue_attributes( $queue_name, 'Policy' );
+
+  return
+    if !defined $rsp->{Attributes};
 
   return $rsp->{Attributes}{Policy};
 }

@@ -69,7 +69,10 @@ sub cmd_elbv2_get_alb_target_group {
 
   my $tg = eval {
     my $rsp = $self->_elbv2->DescribeTargetGroups( { Names => [$name] } );
-    return $rsp->{TargetGroups}[0];
+
+    my $target_groups = $rsp->{TargetGroups} // [];
+
+    return $target_groups->[0];
   };
 
   if ( $EVAL_ERROR && blessed $EVAL_ERROR ) {
@@ -91,13 +94,17 @@ sub cmd_elbv2_create_alb_target_group {
   die "ERROR: usage: create-alb-target-group name\n"
     if !$name;
 
-  my $rsp = $self->_elbv2->CreateTargetGroup(
-    { Name       => $name,
-      TargetType => 'lambda',
-    }
-  );
+  my $tg = eval {
+    my $rsp = $self->_elbv2->CreateTargetGroup(
+      { Name       => $name,
+        TargetType => 'lambda',
+      }
+    );
 
-  my $tg = eval { $rsp->{TargetGroups}[0] };
+    my $target_groups = $rsp->{TargetGroups} // [];
+
+    return $target_groups->[0];
+  };
 
   return $self->_handle_response($tg);
 }
@@ -177,17 +184,20 @@ sub cmd_elbv2_get_alb_listener_rule {
 
     return grep {
       my $conditions = $_->{Conditions} // [];
-      my $path_ok    = !$path || grep {
+
+      my $path_ok = !$path || grep {
         $_->{Field} eq 'path-pattern'
           && grep { $_ eq $path }
           @{ $_->{PathPatternConfig}{RegexValues} // [] }
       } @{$conditions};
+
       my $host_ok = !$host || grep {
         $_->{Field} eq 'host-header'
           && grep { $_ eq $host }
           @{ $_->{HostHeaderConfig}{Values} // [] }
       } @{$conditions};
       $path_ok && $host_ok;
+
     } @{ $rsp->{Rules} // [] };
   };
 
@@ -257,7 +267,9 @@ sub cmd_elbv2_create_alb_listener_rule {
       }
     );
 
-    return $rsp->{Rules}[0];
+    my $rules = $rsp->{Rules} // [];
+
+    return $rules->[0];
   };
 
   return $self->_handle_response($rule);

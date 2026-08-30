@@ -1,0 +1,368 @@
+package Amazon::API::Lambda::Runtime::Builder::Tutorial;
+
+use strict;
+use warnings;
+
+1;
+
+## no critic
+
+__END__
+
+=pod
+
+=encoding utf8
+
+=head1 NAME
+
+Amazon::Lambda::Runtime::Builder::Tutorial - build your first Perl Lambda, start to finish
+
+=head1 DESCRIPTION
+
+This is a walk-through, not a reference. By the end you will have
+written a Perl Lambda that is invoked every time a file lands in an S3
+bucket, deployed it, watched it fire on a real upload, changed it, and
+torn it down - without creating a single AWS resource by hand. Every
+step produces something you can see: a file on disk, a green check, a
+line in the logs.
+
+For what each knob does, follow the links into
+L<Amazon::Lambda::Runtime::Builder>; this document stays on the happy
+path.
+
+=head2 Before you start
+
+You need AWS credentials (e.g. a profile C<alr-builder> can use), Docker running
+locally, and nothing else - not even a bucket; we will let the build create
+one. When in doubt, run C<alr-builder check> at any point: it inspects your
+tools and permissions and tells you plainly what is missing.
+
+I<Note: C<alr-builder> uses L<Amazon::Credentials>. See
+L<Amazon::Credentials> for details regarding how it discovers
+credentials.>
+
+=head2 Step 1 - Scaffold the project
+
+  mkdir ~/MyApp-Lambda-Handler
+  alr-builder install --install-dir MyApp-Lambda-Handler
+  cd ~/MyApp-Lambda-Handler
+
+C<install> drops a starter project into C<MyApp-Lambda-Handler/>: a handler with
+event stubs already written (including the S3 one you'll use), the C<make>
+build integration, a managed-policy list, and a C<lambda-s3-direct.yaml>
+you'll fill in shortly. Nothing here is precious - it's your project now.
+
+=head2 Step 2 - Turn it into a CPAN distribution
+
+The builder installs your handler into the Lambda image as a normal
+Perl distribution, so before it can build the image your project needs
+to produce a distribution tarball. Any tool that produces a distribution
+tarball will do; we recommend L<CPAN::Maker::Bootstrapper>, which is
+built for exactly this:
+
+  cpanm CPAN::Maker::Bootstrapper
+  cd ~/MyApp-Lambda-Handler
+  cmb -I . -i . -m MyApp::Lambda::Handler
+
+When it finishes you'll have a C<MyApp-Lambda-Handler-1.0.0.tar.gz> in the directory. That
+tarball - however you choose to produce it - is what the image is built
+from. From now on, editing your handler and rebuilding regenerates it
+automatically; you won't run the bootstrapper again.
+
+=head2 Step 3 - Write the handler
+
+Open the S3 event stub - it lives under C<lib/> at
+F<.../Lambda/Event/S3.pm>. You will be pleased to find most of the work is
+already done, and that you never have to touch the top-level C<Handler.pm>:
+the scaffold has already wired the S3 trigger to this file for you.
+
+You also don't walk the event by hand. The framework unpacks the S3 message
+and calls C<on_s3_event> B<once per record>, handing you a single record. The
+stub already logs what arrived:
+
+  sub on_s3_event {
+    my ( $self, $s3_record ) = @_;
+
+    my $logger = $self->get_logger;
+
+    my $bucket = $s3_record->{s3}{bucket}{name};
+    my $key    = $s3_record->{s3}{object}{key};
+    my $size   = $s3_record->{s3}{object}{size};
+
+    $logger->info("s3://$bucket/$key ($size bytes)");
+
+    return;
+  }
+
+For the tutorial, replace the shipped stub with the simpler version
+above. The generated stub also demonstrates fetching the object with
+L<Amazon::S3::Lite>; you can restore that later when you want to explore
+object access and IAM permissions.
+
+The stub as shipped goes one step further: it also fetches the object with
+L<Amazon::S3::Lite> and logs a sample of its contents. That's a good thing to
+keep once you're past your first run, but it needs C<s3:GetObject> on the
+bucket and isn't required to close the loop here. Trim it back to the log
+line above if you want the cleanest possible first deploy.
+
+If your handler needs configuration - an API endpoint, a table name, a
+feature flag - don't hard-code it. Put it in a C<lambda-handler.env> file in
+the project root, one C<KEY=VALUE> per line:
+
+  GREETING=hello
+  TABLE_NAME=my-table
+
+Each line becomes an environment variable on the deployed function, readable
+in your handler exactly as you'd expect:
+
+  my $greeting = $ENV{GREETING};
+
+Change that file later and re-run the build (Step 6) - the framework detects
+it and updates the function's configuration.
+
+=head2 A note on the two kinds of configuration
+
+It's worth pausing on a distinction that trips people up, because these
+files look similar and do very different things:
+
+=over 4
+
+=item * B<C<lambda.yaml>> (and the C<lambda.env> generated from it) configure
+the B<build and deployment> - which trigger, how much memory and timeout,
+the function name, the region. These are knobs for I<how the function is
+provisioned>. Tune them in C<lambda.yaml>: C<lambda.env> is regenerated from
+it, so hand-edits to C<lambda.env> are overwritten. After a change, re-run
+the build to apply it.
+
+=item * B<C<lambda-handler.env>> sets the B<runtime environment> your handler
+code reads through C<%ENV>. This is I<your application's> configuration, not
+the framework's.
+
+=back
+
+Rule of thumb: if your Perl reads it, it belongs in C<lambda-handler.env>;
+if it changes how the function is built or wired up, it belongs in
+C<lambda.yaml>.
+
+=head2 Step 4 - Configure the trigger
+
+The scaffold includes a starter configuration for the C<s3-direct> trigger.
+The builder uses C<lambda.yaml> as the project configuration file.  If the
+scaffold left the trigger-specific file in place, copy it first:
+
+  cp lambda-s3-direct.yaml lambda.yaml
+
+Open C<lambda.yaml>.  It should look roughly like this:
+
+  image:
+  handler: 'MyApp::Lambda::Handler'   # already set for you - leave it
+  lambda:
+  name: lambda-handler                # the function name; rename if you like
+  trigger:
+  type: s3-direct
+  bucket: my-input-bucket             # <- change this
+  prefix: incoming/                   # <- delete this line for the tutorial
+  event: 's3:ObjectCreated:*'         # every new object; leave it
+
+For the tutorial, there are only two things to do:
+
+=over 4
+
+=item 1. Change C<trigger.bucket> to a globally unique S3 bucket name.
+
+=item 2. Delete the C<prefix> line.
+
+=back
+
+S3 bucket names are global, so use something unlikely to collide with an
+existing bucket.  Appending your AWS account id is one simple approach:
+
+  my-input-bucket-123456789012
+
+The build will create this bucket and configure it to invoke the Lambda.
+
+Delete the C<prefix> line so that any object uploaded to the bucket fires the
+function.  If you leave:
+
+prefix: incoming/
+
+in place, only objects uploaded below C<incoming/> will trigger the Lambda.
+That is useful in a real application, but it adds an unnecessary opportunity
+for confusion during the tutorial.
+
+You do not need to set a region here.  The builder gets the AWS region from
+your environment and credentials.  The handler class was also generated from
+the application name and should already be correct.
+
+Save C<lambda.yaml>.  Nothing has been created in AWS yet; this file describes
+what the builder will create in the next steps.
+
+For the complete configuration reference and the options supported by each
+trigger type, see L[Amazon::Lambda::Runtime::Builder](Amazon::Lambda::Runtime::Builder).
+
+=for comment VERIFY 1 (filename): NARROWED via Role::Config. Canonical name is
+lambda.yaml (get_config_file defaults to it; lambda.env derived by ext-swap;
+generated header says "Edit lambda.yaml"). Scaffold ships lambda-s3-direct.yaml.
+Residual: confirm whether alr-builder install writes lambda.yaml directly or the
+user copies the trigger file to it. Drop the cp step if install already produces
+lambda.yaml.
+
+=for comment VERIFY 2 (app_name): NARROWED. Naming is self-consistent under
+app_name=MyApp (-> MyApp::Lambda::Handler / ::Event::S3, matching Step 4's
+image.handler and Step 2's cmb -m). Residual: confirm alr-builder install
+resolves @app_name@ to MyApp.
+
+=head2 Step 5 - Preflight
+
+Two quick checks before you spend time on a build. The first confirms your
+tools and credentials are in order:
+
+  alr-builder check
+
+The second reads your configuration back against the mapping and reports it in
+three groups - required fields still missing, values you've customized, and
+values falling through to their defaults - plus any constraint warnings for
+your trigger. It's the fastest way to catch a typo here instead of in a
+deployed function:
+
+  alr-builder check-env-file
+
+If nothing shows up as missing, you're ready to build.
+
+=for comment VERIFY (command binding): the config readback above is
+Role::Config::cmd_check; the tools/creds "check" is elsewhere (not in the roles
+I have). CLI::Simple maps command->method via the manifest, so the exact verbs
+(check vs check-env-file) come from there - confirm both bind as written.
+
+=head2 Step 6 - Build and deploy
+
+One command takes you from source to a live function:
+
+  CREATE_BUCKET=true alr-builder build
+
+This builds the container image, deploys the function, and wires the S3
+notification to it. By default it expects the bucket to already exist and
+stops with a clear message if it doesn't; to have it provision the bucket for
+you on the way, set C<CREATE_BUCKET> when you build:
+
+  CREATE_BUCKET=true alr-builder build
+
+CREATE_BUCKET=true is only needed because this tutorial starts without
+a bucket. On later builds, or when targeting an existing bucket, plain
+C<alr-builder> build is enough.
+
+The first build is slow - it's assembling the image layers from scratch - but
+reruns reuse what hasn't changed and finish quickly. If anything goes
+sideways, the full log is at F<.cache/E<lt>function-nameE<gt>/build.log>.
+
+When it finishes you have a deployed Lambda and a bucket waiting for its first
+file.
+
+=for comment VERIFY 3 (CREATE_BUCKET): RESHAPED via Role::S3. Creation primitive
+confirmed: create-bucket -> cmd_s3_create_bucket -> $s3->create_bucket. But the
+CREATE_BUCKET *gate* (default false, "already exists" skip, error message) is in
+NO role - it lives in the make recipe consuming CREATE_BUCKET as a build-time
+var. Behavior already code-confirmed in a prior session. Residual: exact
+plumbing (make var vs env) and the error text, from project.mk / the s3 recipe.
+
+=for comment VERIFY 4 (build.log path): confirm .cache/<function-name>/build.log
+casing and location against the CLI/make. With lambda.name=lambda-handler this
+is .cache/lambda-handler/build.log.
+
+=head2 Step 7 - Prove it works
+
+Trigger the lambda by dropping a file in the bucket you named in Step 4:
+
+  aws s3 cp ./hello.txt s3://my-input-bucket/
+
+(If you kept the C<prefix> from Step 4, upload to
+C<s3://my-input-bucket/incoming/hello.txt> instead - otherwise nothing
+fires.)
+
+You can also invoke the function directly with the canned event using
+make invoke when you want to test the handler without touching S3.
+
+  make invoke
+
+Either way, the proof is in the logs - the C<s3://bucket/key (N bytes)> line
+your handler wrote, or the fuller dump if you kept the shipped stub. View them
+however you like: C<aws-logs> (ships with
+L<Log::Log4perl::Appender::CloudWatch>), plain C<aws logs tail>, or the
+third-party C<awslogs>. Watch the real upload land and you've closed the loop:
+file in, handler runs, log out.
+
+=for comment VERIFY 5 (invoke): NARROWED. Underlying command confirmed -
+Role::Lambda::cmd_lambda_invoke_function takes (function-name, payload-file) and
+slurps the payload path (helper verb: invoke-function). Still need the make
+target name (make invoke?) and the canned payload filename (payload-s3-direct.json)
+from the Makefile / project.mk. Fallback if the target differs:
+alr-builder-helper invoke-function <fn> <payload-file>.
+
+=head2 Step 8 - Iterate
+
+There's no separate update command. Change your handler - add a field to the
+log line, read a new value from C<lambda-handler.env> - and run the same build
+again:
+
+  alr-builder build
+
+It rebuilds only what changed and updates the deployed function in place. Drop
+another file in the bucket and you'll see your new behavior in the logs.
+
+=head2 Step 9 - Tear down
+
+When you're done, remove what the build created:
+
+  alr-builder teardown
+
+Note what this does I<not> do: it removes the S3 notification and the
+function, but it leaves the bucket - and anything in it - in place, even a
+bucket that C<CREATE_BUCKET> provisioned. That's deliberate: teardown won't
+delete data you might still want. If you want the bucket gone, remove it
+yourself.
+
+=for comment VERIFY 6 (teardown wording): STRONGLY SUPPORTED. No delete-bucket
+primitive exists anywhere in the roles (no cmd_s3_delete_bucket, no
+$s3->delete_bucket) - so teardown structurally cannot remove the bucket. The
+notification-removal primitive exists: cmd_s3_remove_bucket_notification_configuration
+-> $s3->remove_bucket_notification_configuration. Residual: confirm the teardown
+make target wires remove-bucket-notification (+ delete-function / remove-permission
+/ delete-eventsource-mappings) for s3-direct.
+
+=head2 Where to go next
+
+You've built the simplest useful shape: one function, one bucket, direct
+invocation. Each of these is a link into L<Amazon::Lambda::Runtime::Builder>
+for when your needs grow:
+
+=over 4
+
+=item * B<Bursts, retries, or a dead-letter queue> - switch the trigger to
+C<s3-sqs>, which puts a queue between S3 and your function.
+
+=item * B<Run on a schedule> - use the C<eventbridge> trigger instead of an S3
+event.
+
+=item * B<Call it over HTTP> - front it with an C<alb> trigger or a Function
+URL.
+
+=item * B<Stream a large response> - use streaming with a Function URL.
+
+=item * B<Heavy shared dependencies you don't want to rebuild every image> -
+move them into a platform layer (C<PLATFORM_IMAGE> / C<Dockerfile.platform>).
+
+=item * B<Iterating on a module that also lives on CPAN or your DarkPAN> -
+force a fresh install with C<requires.reinstall>.
+
+=item * B<Extra IAM permissions> - add inline policies via
+C<CUSTOM_POLICIES_FILE>, or extend the managed-policy list.
+
+=back
+
+=head1 SEE ALSO
+
+L<Amazon::Lambda::Runtime::Builder>, L<CPAN::Maker::Bootstrapper>,
+L<Amazon::Credentials>, L<Amazon::S3::Lite>,
+L<Log::Log4perl::Appender::CloudWatch>
+
+=cut

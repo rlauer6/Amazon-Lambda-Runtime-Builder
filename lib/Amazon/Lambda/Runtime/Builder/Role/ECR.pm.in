@@ -7,6 +7,7 @@ use CLI::Simple::Constants qw(:booleans);
 use Data::Dumper;
 use English qw(-no_match_vars);
 use JSON;
+use Scalar::Util qw(reftype blessed);
 use Role::Tiny;
 use Scalar::Util qw(blessed);
 
@@ -179,7 +180,7 @@ sub cmd_ecr_describe_images {
   return $self->_handle_response($rsp)
     if $EVAL_ERROR || !$rsp;
 
-  my ($image_details) = reverse sort { $a->{imagePushedAt} cmp $b->{imagePushedAt} } @{ $rsp->{imageDetails} || [] };
+  my ($image_details) = reverse sort { $a->{imagePushedAt} <=> $b->{imagePushedAt} } @{ $rsp->{imageDetails} || [] };
 
   return $self->_handle_response( $image_details, $filter );
 
@@ -197,9 +198,22 @@ sub _ecr_login_password {
 
   my $token = $ecr->GetAuthorizationToken;
 
-  my ($decoded) = split /:/xsm, $token->{authorizationData}->[0]->{authorizationToken}, 2;
+  die "ERROR: ECR did not return authorization data\n"
+    if !defined $token
+    || !ref $token
+    || reftype($token) ne 'HASH'
+    || !defined $token->{authorizationData}
+    || !ref $token->{authorizationData}
+    || reftype( $token->{authorizationData} ) ne 'ARRAY'
+    || !@{ $token->{authorizationData} }
+    || !defined $token->{authorizationData}->[0]->{authorizationToken};
 
-  my ( undef, $password ) = split /:/, MIME::Base64::decode_base64($decoded);
+  my $decoded = MIME::Base64::decode_base64( $token->{authorizationData}->[0]->{authorizationToken} );
+
+  my ( undef, $password ) = split /:/xsm, $decoded, 2;
+
+  die "ERROR: invalid ECR authorization token\n"
+    if !defined $password;
 
   return $password;
 }

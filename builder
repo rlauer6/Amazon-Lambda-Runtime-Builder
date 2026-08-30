@@ -56,7 +56,7 @@ function install_build_deps {
     else
         if ! grep -q "^CPAN::Maker::Bootstrapper" build-requires 2>/dev/null; then
             echo >&2 "WARNING: adding 'CPAN::Maker::Bootstrapper' to your 'build-requires' file"
-            echo "CPAN::Maker::Bootstrapper" >build-requires
+            echo "CPAN::Maker::Bootstrapper" >>build-requires
         fi
     fi
 

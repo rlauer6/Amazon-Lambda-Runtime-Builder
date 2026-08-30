@@ -1,3 +1,28 @@
+Sun Aug 30 08:35:54 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.5.5]:
+	* README.md: generated
+	* VERSION: bump
+	* TUTORIAL.md: generated
+	* project.mk: modified
+	* buildspec.yml: +TUTORIAL.md, +README.md
+	* lib/Amazon/Lambda/Runtime/Builder.pm.in: pod updates
+	* lib/Amazon/Lambda/Runtime/Builder/Role/ECR.pm.in
+	(cmd_ecr_describe_iamges)
+	- use numeric comparison for imagePushedAt
+	(_ecr_login_password)
+	- handle missing members
+	* lib/Amazon/Lambda/Runtime/Builder/Role/ELBv2.pm.in
+	(cmd_elbv2_get_alb_target_group): handle missing members
+	(cmd_elbv2_get_alb_listener_rule): likewise
+	* lib/Amazon/Lambda/Runtime/Builder/Role/SQS.pm.in
+	(cmd_sqs_set_queue_redrive_policy): handle missing members
+	(_sqs_get_queue_arn): likewise
+	(_sqs_get_queue_policy): likewise
+	* lib/Amazon/Lambda/Runtime/Builder/Role/Tutorial.pm.in: new
+	* share/Dockerfile
+	- add --no-prebuilt to force rebuilding .reinstall packages
+
 Fri Aug 21 09:34:19 2026  Rob Lauer  <rclauer@gmail.com>
 
 	[1.5.4]:

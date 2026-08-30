@@ -9,12 +9,15 @@ min-perl-version: 5.010
 dependencies:
   requires: requires
   test-requires: test-requires
+  build-requires: requires.build
 path:
   pm-module: lib
   exe-files: bin
   tests: t
 extra-files:
   - ChangeLog
+  - README.md
+  - TUTORIAL.md
   - share:
       - README.md
       - share/Dockerfile
